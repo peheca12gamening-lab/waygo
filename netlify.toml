@@ -1,0 +1,4 @@
+[build]
+  base = "waygo-app"
+  command = "npm run build"
+  publish = "dist"
