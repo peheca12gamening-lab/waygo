@@ -1,0 +1,237 @@
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Variables (Light mode defaults) ──────────────────────────────────── */
+:root {
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+
+  --bg-primary:    #FFFFFF;
+  --bg-secondary:  #F5F5FF;
+  --bg-card:       #FFFFFF;
+  --bg-input:      #F5F5FF;
+  --bg-chip:       #EAEAF8;
+
+  --text-primary:  #1A1A3E;
+  --text-mid:      #5858A0;
+  --text-soft:     #9898C0;
+
+  --border:        #E0E0F5;
+  --border-card:   #E8E8F8;
+
+  --shadow:        rgba(176,144,255,0.12);
+  --shadow-nav:    rgba(176,144,255,0.15);
+
+  --rainbow: linear-gradient(135deg,#FF90B5,#B090FF,#7AC8FF,#78E8C8);
+  --rainbow-bg: linear-gradient(160deg,#FFF8FB 0%,#F8F8FF 50%,#F5FAFF 100%);
+}
+
+/* ── Dark mode overrides ──────────────────────────────────────────────────── */
+html.dark {
+  --bg-primary:    #0F0F1A;
+  --bg-secondary:  #1A1A2E;
+  --bg-card:       #1E1E32;
+  --bg-input:      #252540;
+  --bg-chip:       #2A2A48;
+
+  --text-primary:  #F0F0FF;
+  --text-mid:      #B0B0D8;
+  --text-soft:     #7070A0;
+
+  --border:        #2E2E50;
+  --border-card:   #2A2A48;
+
+  --shadow:        rgba(0,0,0,0.4);
+  --shadow-nav:    rgba(0,0,0,0.5);
+
+  --rainbow-bg: linear-gradient(160deg,#12101A 0%,#0F0F20 50%,#0A1018 100%);
+}
+
+/* ── Apply variables globally ─────────────────────────────────────────────── */
+* { -webkit-tap-highlight-color: transparent; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0; padding: 0;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ── Utility classes that use CSS vars ────────────────────────────────────── */
+.bg-app        { background-color: var(--bg-primary); }
+.bg-secondary  { background-color: var(--bg-secondary); }
+.bg-card       { background-color: var(--bg-card); }
+.bg-input      { background-color: var(--bg-input); }
+.bg-chip       { background-color: var(--bg-chip); }
+.text-primary  { color: var(--text-primary) !important; }
+.text-mid      { color: var(--text-mid) !important; }
+.text-soft     { color: var(--text-soft) !important; }
+.border-theme  { border-color: var(--border) !important; }
+.bg-rainbow    { background: var(--rainbow-bg); }
+
+/* Applies theme to all common elements automatically */
+html.dark input,
+html.dark textarea,
+html.dark select {
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+html.dark .leaflet-popup-content-wrapper,
+html.dark .leaflet-popup-tip {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+/* ── Safe areas ───────────────────────────────────────────────────────────── */
+.pb-safe { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.pt-safe { padding-top: max(1rem, env(safe-area-inset-bottom)); }
+
+.scrollbar-hide { -ms-overflow-style:none; scrollbar-width:none; }
+.scrollbar-hide::-webkit-scrollbar { display:none; }
+
+input, textarea, select { font-size: 16px !important; }
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0px 1000px var(--bg-input) inset;
+  -webkit-text-fill-color: var(--text-primary);
+}
+
+/* ── Rainbow helpers ──────────────────────────────────────────────────────── */
+.gradient-text {
+  background: var(--rainbow);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.btn-rainbow {
+  background: var(--rainbow);
+  color: white; font-weight: 700; border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(176,144,255,0.35);
+  transition: all 0.3s ease;
+}
+.btn-rainbow:active { transform: scale(0.97); }
+
+/* ── Camera: force UI controls to always be visible ──────────────────────── */
+.camera-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 51;
+}
+.camera-viewport {
+  flex: 1 1 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: #000;
+}
+.camera-viewport video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.camera-controls {
+  flex: 0 0 auto;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-primary);
+  border-top: 1.5px solid var(--border);
+  min-height: 100px;
+}
+
+/* ── Bounce animation ─────────────────────────────────────────────────────── */
+@keyframes bounce-subtle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.animate-bounce-subtle { animation: bounce-subtle 2s ease-in-out infinite; }
+
+/* ── Leaflet overrides ────────────────────────────────────────────────────── */
+.leaflet-container { background: var(--bg-primary) !important; font-family: 'Inter', system-ui, sans-serif; }
+.leaflet-popup-content-wrapper { background: var(--bg-card); color: var(--text-primary); border-radius: 16px; box-shadow: 0 8px 32px rgba(176,144,255,0.2); border: 1px solid var(--border-card); }
+.leaflet-popup-tip { background: var(--bg-card); }
+.leaflet-popup-close-button { color: var(--text-soft) !important; }
+.custom-marker, .explorer-marker, .user-arrow-marker { background:transparent !important; border:none !important; }
+.waygo-popup .leaflet-popup-content-wrapper { padding:0; }
+.waygo-popup .leaflet-popup-content { margin:0; }
+
+@layer utilities {
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
+/* ── Override ALL hardcoded waygo- Tailwind classes in dark mode ─────────── */
+html.dark .text-waygo-text    { color: var(--text-primary) !important; }
+html.dark .text-waygo-textMid { color: var(--text-mid)     !important; }
+html.dark .text-waygo-textSoft{ color: var(--text-soft)    !important; }
+html.dark .bg-waygo-dark      { background-color: var(--bg-primary)   !important; }
+html.dark .bg-waygo-darkMid   { background-color: var(--bg-secondary) !important; }
+html.dark .bg-waygo-darkLight { background-color: var(--bg-chip)      !important; }
+html.dark .border-waygo-border{ border-color: var(--border)           !important; }
+html.dark .bg-white           { background-color: var(--bg-card)      !important; }
+html.dark .text-gray-400      { color: var(--text-soft)   !important; }
+html.dark .text-gray-300      { color: var(--text-mid)    !important; }
+html.dark .text-gray-500      { color: var(--text-soft)   !important; }
+html.dark .text-gray-800      { color: var(--text-primary)!important; }
+html.dark .bg-gray-100        { background-color: var(--bg-chip) !important; }
+
+/* Dark mode: any inline white bg cards */
+html.dark [style*="background: white"],
+html.dark [style*="background-color: white"],
+html.dark [style*="background:#FFFFFF"],
+html.dark [style*="background: #FFFFFF"],
+html.dark [style*="background:'white'"] {
+  background-color: var(--bg-card) !important;
+}
+
+/* Dark mode: search/input fields */
+html.dark input:not([type="file"]) {
+  background-color: var(--bg-input) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border) !important;
+}
+
+/* Dark mode: all rounded card divs that use F5F5FF */
+html.dark [style*="#F5F5FF"],
+html.dark [style*="#F5F5ff"],
+html.dark [style*="#f5f5ff"],
+html.dark [style*="#EAEAF8"],
+html.dark [style*="#F0F0FF"],
+html.dark [style*="rgba(255,255,255"] {
+  filter: none;
+}
+
+/* Quests page */
+html.dark .min-h-screen.bg-waygo-dark {
+  background-color: var(--bg-primary) !important;
+}
+
+/* Smooth transition on all backgrounds */
+*, *::before, *::after {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+}
+/* But NOT on map tiles, animations, transforms */
+.leaflet-tile, .leaflet-container *, [class*="animate-"] {
+  transition: none !important;
+}
+
+html.dark .leaflet-container { background: #0F0F1A !important; }
