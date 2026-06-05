@@ -1,6 +1,6 @@
 [build]
   base = "waygo-app"
-  command = "npm ci && npm run build"
+  command = "npm ci && npm run build-only"
   publish = "dist"
 
 [[redirects]]
