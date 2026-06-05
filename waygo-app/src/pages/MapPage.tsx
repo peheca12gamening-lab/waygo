@@ -3,8 +3,15 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { fetchRoute, formatDuration as orsFormatDuration, formatDistance as orsFormatDistance } from '../lib/openRouteService';
-import type { RouteResult } from '../lib/openRouteService';
+// Direct-path navigation (no external routing API required per spec)
+function walkingTime(distanceM: number): string {
+  const mins = Math.round(distanceM / (5000 / 60));
+  if (mins < 60) return `~${mins} min`;
+  return `~${Math.floor(mins/60)}h ${mins%60}m`;
+}
+function fmtDist(m: number): string {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m/1000).toFixed(1)} km`;
+}
 import { motion, AnimatePresence } from 'framer-motion';
 import { Crosshair, Navigation } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
@@ -108,88 +115,61 @@ function MapPageContent({ businesses, onBusinessSelect, selectedBusiness, onChec
   const [selectedExplorer, setSelectedExplorer] = useState<{ explorer: { user_id: string; full_name: string; lat: number; lng: number }; index: number } | null>(null);
   const [mapInst, setMapInst] = useState<L.Map | null>(null);
   const mapRef = useRef<HTMLDivElement>(null);
-  const [routeData, setRouteData] = useState<RouteResult | null>(null);
   const [routePolyline, setRoutePolyline] = useState<L.Polyline | null>(null);
-  const [navError, setNavError] = useState(false);
   const [pulsingDot, setPulsingDot] = useState<L.CircleMarker | null>(null);
-  const intervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
+  const pulseIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [arrived, setArrived] = useState(false);
 
   useFogOfWarCanvas(mapRef, mapInst, tiles, false);
 
-  // Cleanup helper for route layers and intervals
   const clearRoute = useCallback(() => {
     if (routePolyline && mapInst) { mapInst.removeLayer(routePolyline); setRoutePolyline(null); }
     if (pulsingDot && mapInst) { mapInst.removeLayer(pulsingDot); setPulsingDot(null); }
-    intervalsRef.current.forEach(clearInterval);
-    intervalsRef.current = [];
-    setRouteData(null);
-    setNavError(false);
+    if (pulseIntervalRef.current) { clearInterval(pulseIntervalRef.current); pulseIntervalRef.current = null; }
+    setArrived(false);
   }, [routePolyline, pulsingDot, mapInst]);
 
-  // ORS route fetching when routeTarget changes
+  // Direct geodesic polyline — redrawn whenever user position or target changes
   useEffect(() => {
-    clearRoute();
-    if (!routeTarget || !mapInst) return;
+    if (!routeTarget || !mapInst) { clearRoute(); return; }
 
-    const fetchAndDraw = async (from: [number, number]) => {
-      const result = await fetchRoute(from, [routeTarget.lat, routeTarget.lng]);
-      if (!result) {
-        setNavError(true);
-        const line = L.polyline([from, [routeTarget.lat, routeTarget.lng]], {
-          color: '#808080', weight: 3, opacity: 0.7, dashArray: '10,10',
-        }).addTo(mapInst);
-        setRoutePolyline(line);
-        return;
-      }
-      setNavError(false);
-      setRouteData(result);
-      const line = L.polyline(result.coordinates, {
-        color: '#3B82F6', weight: 5, opacity: 0.85,
-      }).addTo(mapInst);
-      setRoutePolyline(line);
-      mapInst.fitBounds(line.getBounds(), { padding: [60, 60], maxZoom: 16 });
+    // Remove previous layers
+    if (routePolyline) mapInst.removeLayer(routePolyline);
+    if (pulsingDot) mapInst.removeLayer(pulsingDot);
+    if (pulseIntervalRef.current) clearInterval(pulseIntervalRef.current);
 
-      const dot = L.circleMarker(from, {
-        radius: 8, color: '#3B82F6', fillColor: '#3B82F6', fillOpacity: 1, weight: 3,
-      }).addTo(mapInst);
-      setPulsingDot(dot);
+    const from: [number, number] = livePosition;
+    const to: [number, number] = [routeTarget.lat, routeTarget.lng];
+    const distToTarget = haversine(from[0], from[1], to[0], to[1]);
 
-      let grow = true;
-      const pulseInterval = setInterval(() => {
-        const r = dot.getRadius();
-        dot.setRadius(grow ? Math.min(r + 0.5, 12) : Math.max(r - 0.5, 6));
-        if (r >= 12 || r <= 6) grow = !grow;
-      }, 80);
-      intervalsRef.current.push(pulseInterval);
+    // Blue geodesic line
+    const line = L.polyline([from, to], { color: '#3B82F6', weight: 5, opacity: 0.85 }).addTo(mapInst);
+    setRoutePolyline(line);
+    mapInst.fitBounds(line.getBounds(), { padding: [60, 60], maxZoom: 16, animate: true });
 
-      let lastPos = from;
-      const watchInterval = setInterval(async () => {
-        const dist = haversine(lastPos[0], lastPos[1], livePosition[0], livePosition[1]);
-        if (dist > 50) {
-          lastPos = livePosition;
-          const newResult = await fetchRoute(livePosition, [routeTarget.lat, routeTarget.lng]);
-          if (newResult) {
-            setRouteData(newResult);
-            if (routePolyline) mapInst.removeLayer(routePolyline);
-            const newLine = L.polyline(newResult.coordinates, {
-              color: '#3B82F6', weight: 5, opacity: 0.85,
-            }).addTo(mapInst);
-            setRoutePolyline(newLine);
-            if (pulsingDot) mapInst.removeLayer(pulsingDot);
-            const newDot = L.circleMarker(livePosition, {
-              radius: 8, color: '#3B82F6', fillColor: '#3B82F6', fillOpacity: 1, weight: 3,
-            }).addTo(mapInst);
-            setPulsingDot(newDot);
-          }
-        }
-        mapInst.setView(livePosition, mapInst.getZoom(), { animate: true });
-      }, 5000);
-      intervalsRef.current.push(watchInterval);
+    // Pulsing blue GPS dot
+    const dot = L.circleMarker(from, {
+      radius: 8, color: '#3B82F6', fillColor: '#3B82F6', fillOpacity: 1, weight: 3,
+    }).addTo(mapInst);
+    setPulsingDot(dot);
+
+    let grow = true;
+    pulseIntervalRef.current = setInterval(() => {
+      const r = dot.getRadius();
+      dot.setRadius(grow ? Math.min(r + 0.5, 12) : Math.max(r - 0.5, 6));
+      if (r >= 12 || r <= 6) grow = !grow;
+    }, 80);
+
+    // Check arrival
+    if (distToTarget < 50) setArrived(true);
+
+    // Recenter map on user
+    mapInst.setView(from, mapInst.getZoom(), { animate: true });
+
+    return () => {
+      if (pulseIntervalRef.current) clearInterval(pulseIntervalRef.current);
     };
-
-    fetchAndDraw(livePosition);
-    return clearRoute;
-  }, [mapInst, routeTarget]);
+  }, [mapInst, routeTarget, livePosition]);
 
   const handleMapReady = useCallback((m: L.Map) => {
     setMapInst(m);
@@ -287,33 +267,48 @@ function MapPageContent({ businesses, onBusinessSelect, selectedBusiness, onChec
             animate={{ y: 0, opacity: 1 }}
             className="absolute bottom-8 left-4 right-4 z-30"
           >
-            <div className="rounded-2xl p-4" style={{
-              background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(24px)',
-              border: '1.5px solid #E8E8F8', boxShadow: '0 8px 32px rgba(59,130,246,0.18)'
-            }}>
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <h4 className="font-bold text-sm" style={{ color: '#1a1a2e' }}>{routeTarget.name}</h4>
-                  <div className="flex items-center gap-3 mt-1">
-                    {routeData ? (
-                      <>
-                        <span className="text-xs font-semibold text-blue-500">{orsFormatDistance(routeData.distance)}</span>
-                        <span className="text-xs text-gray-500">{orsFormatDuration(routeData.duration)}</span>
-                      </>
-                    ) : navError ? (
-                      <span className="text-xs text-amber-600">Exact route unavailable — showing direct path</span>
-                    ) : (
-                      <span className="text-xs text-gray-400">Loading route...</span>
-                    )}
+            {(() => {
+              const distM = haversine(livePosition[0], livePosition[1], routeTarget.lat, routeTarget.lng);
+              return arrived ? (
+                <div className="rounded-2xl p-4" style={{
+                  background: 'linear-gradient(135deg,#E8FFF5,#E0F8FF)', backdropFilter: 'blur(24px)',
+                  border: '1.5px solid #78E8C8', boxShadow: '0 8px 32px rgba(120,232,200,0.3)'
+                }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-black text-sm" style={{ color: '#00A090' }}>✅ You've arrived at {routeTarget.name}!</p>
+                      <p className="text-xs mt-0.5" style={{ color: '#00A090' }}>Tap Check In below to earn XP</p>
+                    </div>
+                    <button onClick={() => onCheckIn(routeTarget as any)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-white"
+                      style={{ background: 'linear-gradient(135deg,#78E8C8,#00C8A0)' }}>
+                      Check In
+                    </button>
                   </div>
                 </div>
-                <button onClick={onClearRoute}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-white"
-                  style={{ background: 'linear-gradient(135deg,#FF6080,#B090FF)' }}>
-                  Stop Navigation
-                </button>
-              </div>
-            </div>
+              ) : (
+                <div className="rounded-2xl p-4" style={{
+                  background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(24px)',
+                  border: '1.5px solid #BFDBFE', boxShadow: '0 8px 32px rgba(59,130,246,0.18)'
+                }}>
+                  <div className="h-1 rounded-full mb-3" style={{ background: 'linear-gradient(90deg,#3B82F6,#60A5FA)' }} />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-sm" style={{ color: '#1a1a2e' }}>{routeTarget.name}</h4>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-base font-black text-blue-600">{fmtDist(distM)}</span>
+                        <span className="text-xs text-gray-500">{walkingTime(distM)}</span>
+                      </div>
+                    </div>
+                    <button onClick={onClearRoute}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-white"
+                      style={{ background: '#EF4444' }}>
+                      Stop
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </motion.div>
         </>
       )}

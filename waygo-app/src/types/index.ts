@@ -387,6 +387,9 @@ export interface Landmark {
   image_url: string | null;
   is_active: boolean;
   created_at: string;
+  // extended fields
+  address?: string | null;
+  points?: number | null;
 }
 
 export interface Message {

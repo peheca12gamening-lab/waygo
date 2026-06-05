@@ -1,6 +1,6 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Map, ScrollText, Sparkles, User, Trophy, Landmark } from 'lucide-react';
+import { Map, ScrollText, Sparkles, User, Trophy, Landmark, Briefcase } from 'lucide-react';
 import { useUI } from '../../context/UIContext';
 import { useApp } from '../../context/AppContext';
 
@@ -17,6 +17,7 @@ export function BottomNav() {
     { path: '/foryou',      label: t.forYou,    icon: Sparkles  },
     { path: '/profile',     label: t.profile,   icon: User      },
     { path: '/leaderboard', label: t.top,       icon: Trophy    },
+    { path: '/business',    label: 'Business',   icon: Briefcase },
   ];
 
   return (

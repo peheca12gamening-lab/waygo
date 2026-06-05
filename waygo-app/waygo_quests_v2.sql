@@ -82,5 +82,8 @@ VALUES
  '[{"type":"quests_completed","count":10,"description":"Complete 10 other quests"}]'::jsonb, 'CircleDot', 10, true),
 
 ('Century Club', 'Accumulate 100 total check-ins.', 'cultural', 'Legendary', 'platinum', 2000, 1,
- '[{"type":"checkin","count":100,"description":"Accumulate 100 total check-ins"}]'::jsonb, 'Star', 10, true)
+ '[{"type":"checkin","count":100,"description":"Accumulate 100 total check-ins"}]'::jsonb, 'Star', 10, true),
+
+('Coffee Connoisseur', 'Visit 3 different cafés in Plovdiv and earn the Coffee Connoisseur badge.', 'food', 'Medium', 'silver', 300, 3,
+ '[{"type":"checkin","count":3,"description":"Visit 3 different cafés"}]'::jsonb, 'Coffee', 3, true)
 ON CONFLICT DO NOTHING;

@@ -1,14 +1,13 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MapPin, Settings, X, UserPlus, ChevronRight, Camera, Heart, Check, Send, MessageCircle, Smile, PenTool } from 'lucide-react';
+import { MapPin, Settings, X, UserPlus, ChevronRight, Camera, Heart } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import type { LangCode } from '../lib/translations';
 import { useUI } from '../context/UIContext';
-import { getUserBadges, searchProfiles, getFriends, subscribeToMessages, markMessagesRead, subscribeToTyping, setTyping, conversationId } from '../lib/db';
+import { getUserBadges, searchProfiles } from '../lib/db';
+import { FriendsPanel } from '../components/chat/FriendsPanel';
 import { stringToColor } from '../lib/utils';
-import type { FriendRequest, Message } from '../types';
 import { XPBar, StreakCard } from '../components/shared';
 import { useStreak } from '../hooks/useStreak';
 
@@ -248,540 +247,120 @@ function CheckInsPanel({ onClose }: { onClose: () => void }) {
 
 function PointsPanel({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
-  if (!user) return null;
-  return (
-    <SlidePanel onClose={onClose}>
-      <PanelHeader title="My Points" onClose={onClose} />
-      <div className="p-5 pb-10 space-y-4">
-        <div className="rounded-3xl p-8 flex flex-col items-center text-center"
-          style={{ background: 'linear-gradient(135deg,#FFF5F8,#F8F5FF,#F0F8FF)', border: '1.5px solid #E8E0FF' }}>
-          <p className="text-7xl font-black mb-2" style={{ background: rainbowGrad, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            {user.points}
-          </p>
-          <p className="text-waygo-textSoft">points available</p>
-          <p className="text-xs text-waygo-textSoft mt-2">Total XP: {user.xp_total.toLocaleString()}</p>
-        </div>
-        <div className="rounded-2xl p-4 bg-white" style={{ border: '1.5px solid #E8E8F8' }}>
-          <p className="font-bold text-waygo-text mb-2">How to earn points</p>
-          <p className="text-sm text-waygo-textSoft">Visit museums and cultural sights → take a photo → upload to For You feed → earn <strong>50 pts</strong> per sight.</p>
-        </div>
-        <div className="rounded-2xl p-4 bg-white" style={{ border: '1.5px solid #E8E8F8' }}>
-          <p className="font-bold text-waygo-text mb-3">Recent earnings</p>
-          <div className="space-y-2">
-            {user.visitHistory.filter(v => v.pointsEarned > 0).slice(0, 5).map(v => (
-              <div key={v.id} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">🏛️</span>
-                  <div><p className="text-sm text-waygo-text font-medium">{v.placeName}</p><p className="text-xs text-waygo-textSoft">{new Date(v.date).toLocaleDateString()}</p></div>
-                </div>
-                <span className="font-bold text-sm" style={{ color: '#00A090' }}>+{v.pointsEarned}</span>
-              </div>
-            ))}
-            {user.visitHistory.filter(v => v.pointsEarned > 0).length === 0 && (
-              <p className="text-waygo-textSoft text-sm">No points earned yet. Visit a museum!</p>
-            )}
-          </div>
-        </div>
-      </div>
-    </SlidePanel>
-  );
-}
-
-function FriendProfile({ friend, onClose, onChat }: { friend: FriendDisplay; onClose: () => void; onChat: () => void }) {
-  return (
-    <SlidePanel onClose={onClose}>
-      <PanelHeader title={friend.name} onClose={onClose} />
-      <div className="p-5 pb-10 space-y-4">
-        <div className="flex flex-col items-center py-4">
-          <div className="w-20 h-20 rounded-full flex items-center justify-center text-white text-3xl font-black mb-3 overflow-hidden"
-            style={{ background: friend.color, border: `3px solid ${friend.color}` }}>
-            {friend.avatar ? <img src={friend.avatar} alt="" className="w-full h-full object-contain" /> : friend.name.charAt(0)}
-          </div>
-          <h3 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>{friend.name}</h3>
-          <p className="text-sm" style={{ color: 'var(--text-soft)' }}>Level {friend.level} Explorer</p>
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          {[['⭐', friend.points, 'Points'],['📍', friend.checkins, 'Check-ins'],['🏆', String(friend.level), 'Level']].map(([icon, val, label]) => (
-            <div key={String(label)} className="rounded-2xl p-3 text-center" style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)' }}>
-              <div className="text-xl mb-1">{icon}</div>
-              <p className="font-black" style={{ color: 'var(--text-primary)' }}>{val}</p>
-              <p className="text-xs" style={{ color: 'var(--text-soft)' }}>{label}</p>
-            </div>
-          ))}
-        </div>
-        <button onClick={onChat}
-          className="w-full py-3 rounded-xl text-white font-bold flex items-center justify-center gap-2"
-          style={{ background: 'linear-gradient(135deg,#B090FF,#7AC8FF)' }}>
-          <MessageCircle size={18} />
-          Chat
-        </button>
-      </div>
-    </SlidePanel>
-  );
-}
-
-interface FriendDisplay {
-  id: string;
-  name: string;
-  color: string;
-  level: number;
-  points: number;
-  checkins: number;
-  avatar: string;
-}
-
-const EMOJIS = ['😀','😂','❤️','🔥','👍','🎉','😍','🙏','💪','✨','🥰','😎','🤩','👋','💯'];
-
-function formatChatTime(dateStr: string): string {
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diff = now.getTime() - d.getTime();
-  if (diff < 60000) return 'Just now';
-  const hours = d.getHours().toString().padStart(2, '0');
-  const mins = d.getMinutes().toString().padStart(2, '0');
-  if (diff < 86400000) return `${hours}:${mins}`;
-  return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')} ${hours}:${mins}`;
-}
-
-function ChatPanel({ friend, onClose }: { friend: FriendDisplay; onClose: () => void }) {
-  const { user, sendMessage, getMessages } = useAuth();
-  const { t } = useApp();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
-  const [showEmoji, setShowEmoji] = useState(false);
-  const [showCanvas, setShowCanvas] = useState(false);
-  const [friendOnline, setFriendOnline] = useState(false);
-  const [typing, setTypingState] = useState(false);
-  const listRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [ledger, setLedger] = useState<Array<{ id: number; reason: string; amount: number; created_at: string }>>([]);
+  const [loadingLedger, setLoadingLedger] = useState(true);
 
   useEffect(() => {
     if (!user) return;
-    getMessages(friend.id).then(setMessages);
-    const convId = conversationId(user.id, friend.id);
-    const channelKey = `${user.id}-${friend.id}`;
-    const sub = subscribeToMessages(user.id, (msg: any) => {
-      if (msg.sender_id === friend.id || msg.receiver_id === friend.id) {
-        setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
-        markMessagesRead(user.id, friend.id);
-      }
-    }, channelKey);
-
-    const typingSub = subscribeToTyping(convId, user.id, (isTyping) => {
-      setTypingState(isTyping);
+    import('../lib/db').then(({ getPointsLedger }) => {
+      getPointsLedger(user.id).then(data => {
+        setLedger(data as any[]);
+        setLoadingLedger(false);
+      }).catch(() => setLoadingLedger(false));
     });
-
-    markMessagesRead(user.id, friend.id);
-    return () => { sub.unsubscribe(); typingSub.unsubscribe(); };
-  }, [user, friend.id]);
-
-  useEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [messages]);
-
-  // Online status polling
-  useEffect(() => {
-    if (!user) return;
-    const check = async () => {
-      try {
-        const { getProfileById } = await import('../lib/db/profiles');
-        const p = await getProfileById(friend.id);
-        if (p?.last_seen_at) {
-          const diff = Date.now() - new Date(p.last_seen_at).getTime();
-          setFriendOnline(diff < 5 * 60 * 1000);
-        }
-      } catch { /* ignore */ }
-    };
-    check();
-    const interval = setInterval(check, 30000);
-    return () => clearInterval(interval);
-  }, [user, friend.id]);
-
-  const handleTyping = () => {
-    if (!user) return;
-    const convId = conversationId(user.id, friend.id);
-    setTyping(convId, user.id, true);
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
-      setTyping(convId, user.id, false);
-    }, 2000);
-  };
-
-  const handleSend = async () => {
-    const content = text.trim();
-    if (!content || !user || sending) return;
-    setSending(true);
-    const convId = conversationId(user.id, friend.id);
-    try {
-      await sendMessage(friend.id, content);
-      setMessages(prev => [...prev, {
-        id: `temp-${Date.now()}`,
-        sender_id: user.id,
-        receiver_id: friend.id,
-        conversation_id: convId,
-        content,
-        type: 'text',
-        image_data: null,
-        is_read: false,
-        created_at: new Date().toISOString(),
-      }]);
-      setText('');
-      setTyping(convId, user.id, false);
-    } catch (err) {
-      console.error('sendMessage failed:', err);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  // ── Canvas drawing handlers ──
-  const [lineColor, setLineColor] = useState('#B090FF');
-  const [lineWidth, setLineWidth] = useState(3);
-
-  const resizeCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * window.devicePixelRatio;
-    canvas.height = rect.height * window.devicePixelRatio;
-    const ctx = canvas.getContext('2d');
-    if (ctx) ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-  }, []);
-
-  useEffect(() => {
-    if (!showCanvas) return;
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    return () => window.removeEventListener('resize', resizeCanvas);
-  }, [showCanvas, resizeCanvas]);
-
-  const getCanvasPos = (e: React.MouseEvent | React.TouchEvent) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    return { x: clientX - rect.left, y: clientY - rect.top };
-  };
-
-  const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
-    e.preventDefault();
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const { x, y } = getCanvasPos(e);
-    setIsDrawing(true);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-  };
-
-  const draw = (e: React.MouseEvent | React.TouchEvent) => {
-    e.preventDefault();
-    if (!isDrawing) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const { x, y } = getCanvasPos(e);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = lineWidth;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-  };
-
-  const stopDrawing = () => setIsDrawing(false);
-
-  const clearCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }, []);
-
-  const sendDrawing = async () => {
-    const canvas = canvasRef.current;
-    if (!canvas || !user || sending) return;
-    const dataUrl = canvas.toDataURL('image/png');
-    setSending(true);
-    try {
-      await sendMessage(friend.id, dataUrl, { type: 'image', imageData: dataUrl });
-      setMessages(prev => [...prev, {
-        id: `temp-${Date.now()}`,
-        sender_id: user.id,
-        receiver_id: friend.id,
-        conversation_id: conversationId(user.id, friend.id),
-        content: dataUrl,
-        type: 'image',
-        image_data: dataUrl,
-        is_read: false,
-        created_at: new Date().toISOString(),
-      }]);
-      setShowCanvas(false);
-    } catch (err) {
-      console.error('sendDrawing failed:', err);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const COLORS = ['#000000', '#FF4444', '#4488FF', '#44CC44', '#B090FF', '#FFFFFF'];
-
-  return (
-    <SlidePanel onClose={onClose}>
-      <PanelHeader title={`${friend.name}`} onClose={onClose} />
-      <div className="flex items-center gap-1.5 px-4 pb-2 -mt-2">
-        <span className={`inline-block w-2 h-2 rounded-full ${friendOnline ? 'bg-green-400' : 'bg-gray-300'}`} />
-        <span className="text-xs" style={{ color: 'var(--text-soft)' }}>{friendOnline ? 'Active' : 'Offline'}</span>
-      </div>
-      <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-3" style={{ minHeight: 0 }}>
-        {messages.length === 0 && (
-          <div className="text-center py-8">
-            <MessageCircle size={40} className="mx-auto mb-2" style={{ color: 'var(--text-soft)' }} />
-            <p className="text-sm" style={{ color: 'var(--text-soft)' }}>{t.noMessages}</p>
-          </div>
-        )}
-        {messages.map(msg => {
-          const isMe = msg.sender_id === user?.id;
-          const isImage = msg.type === 'image' || msg.content.startsWith('data:image/');
-          return (
-            <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-              <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm ${isMe ? 'text-white' : ''}`}
-                style={{
-                  background: isMe ? 'linear-gradient(135deg,#B090FF,#7AC8FF)' : 'var(--bg-chip)',
-                  color: isMe ? 'white' : 'var(--text-primary)',
-                  borderBottomRightRadius: isMe ? 4 : 16,
-                  borderBottomLeftRadius: isMe ? 16 : 4,
-                }}>
-                {isImage ? (
-                  <img src={msg.content} alt="Drawing" className="max-w-full rounded-lg" />
-                ) : (
-                  msg.content
-                )}
-              </div>
-              {msg.created_at && (
-                <span className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--text-soft)' }}>
-                  {formatChatTime(msg.created_at)}
-                </span>
-              )}
-            </div>
-          );
-        })}
-        {typing && (
-          <div className="flex items-start">
-            <div className="px-4 py-3 rounded-2xl rounded-bl-sm text-sm" style={{ background: 'var(--bg-chip)' }}>
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── Canvas drawing overlay (full-screen) ── */}
-      {showCanvas && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex flex-col"
-          style={{ background: '#1a1a2e' }}
-        >
-          {/* Toolbar */}
-          <div className="flex items-center gap-2 p-3 bg-white/10">
-            <button onClick={() => setShowCanvas(false)}
-              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 text-white">
-              <X size={18} />
-            </button>
-            <div className="flex-1" />
-            <div className="flex items-center gap-1.5">
-              {COLORS.map(c => (
-                <button key={c} onClick={() => setLineColor(c)}
-                  className={`w-7 h-7 rounded-full border-2 ${c === '#FFFFFF' ? 'border-gray-400' : 'border-white/30'}`}
-                  style={{
-                    background: c,
-                    boxShadow: lineColor === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : 'none',
-                  }} />
-              ))}
-            </div>
-            <div className="flex items-center gap-1.5 ml-2">
-              <span className="text-[10px] text-white/60">1</span>
-              <input type="range" min={1} max={12} value={lineWidth}
-                onChange={e => setLineWidth(Number(e.target.value))}
-                className="w-16 h-1 accent-purple-400" />
-              <span className="text-[10px] text-white/60">12</span>
-            </div>
-            <button onClick={clearCanvas}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/10 text-white/80">
-              Clear
-            </button>
-            <button onClick={sendDrawing} disabled={sending}
-              className="px-4 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-40"
-              style={{ background: 'linear-gradient(135deg,#B090FF,#7AC8FF)' }}>
-              <Send size={12} className="inline mr-1" /> Send
-            </button>
-          </div>
-
-          {/* Canvas area */}
-          <div className="flex-1 relative m-3 rounded-2xl overflow-hidden bg-white">
-            <canvas ref={canvasRef}
-              className="absolute inset-0 w-full h-full touch-none"
-              style={{ cursor: 'crosshair' }}
-              onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseLeave={stopDrawing}
-              onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing} />
-          </div>
-        </motion.div>
-      )}
-
-      {/* ── Emoji picker ── */}
-      {showEmoji && (
-        <div className="px-4 pb-2">
-          <div className="flex flex-wrap gap-1 p-2 rounded-xl" style={{ background: 'var(--bg-chip)' }}>
-            {EMOJIS.map(emoji => (
-              <button key={emoji} onClick={() => setText(prev => prev + emoji)}
-                className="w-8 h-8 flex items-center justify-center text-lg hover:scale-125 transition-transform">
-                {emoji}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Input area ── */}
-      <div className="p-4 border-t" style={{ borderColor: 'var(--border)' }}>
-        <div className="flex gap-2">
-          <button onClick={() => { setShowCanvas(!showCanvas); setShowEmoji(false); }}
-            className="w-10 h-12 rounded-xl flex items-center justify-center"
-            style={{ background: 'var(--bg-chip)' }}>
-            <PenTool size={18} style={{ color: 'var(--text-soft)' }} />
-          </button>
-          <button onClick={() => { setShowEmoji(!showEmoji); setShowCanvas(false); }}
-            className="w-10 h-12 rounded-xl flex items-center justify-center"
-            style={{ background: 'var(--bg-chip)' }}>
-            <Smile size={18} style={{ color: 'var(--text-soft)' }} />
-          </button>
-          <input type="text" value={text} onChange={e => { setText(e.target.value); handleTyping(); }}
-            placeholder={t.typeMessage}
-            onKeyDown={e => e.key === 'Enter' && handleSend()}
-            className="flex-1 px-4 py-3 rounded-xl text-sm outline-none"
-            style={{ background: 'var(--bg-input)', border: '1.5px solid var(--border)', color: 'var(--text-primary)' }} />
-          <button onClick={handleSend} disabled={!text.trim() || sending}
-            className="w-12 h-12 rounded-xl flex items-center justify-center disabled:opacity-40"
-            style={{ background: 'linear-gradient(135deg,#B090FF,#7AC8FF)' }}>
-            <Send size={18} className="text-white" />
-          </button>
-        </div>
-      </div>
-    </SlidePanel>
-  );
-}
-
-function FriendsPanel({ onClose }: { onClose: () => void }) {
-  const { user, acceptFriendRequest, declineFriendRequest } = useAuth();
-  const [selectedFriend, setSelectedFriend] = useState<FriendDisplay | null>(null);
-  const [chatWith, setChatWith] = useState<FriendDisplay | null>(null);
-
-  const { data: friendsList = [] } = useQuery({
-    queryKey: ['friends', user?.id],
-    queryFn: async () => {
-      const data = await getFriends(user!.id);
-      return data.map(f => {
-        const isCurrentUserFriendId = f.friend_id === user!.id;
-        const profile = isCurrentUserFriendId ? f.user_profile! : f.friend!;
-        return {
-          id: profile.id,
-          name: profile.full_name,
-          color: stringToColor(profile.full_name),
-          level: profile.current_level,
-          points: profile.points,
-          checkins: profile.checkins_total,
-          avatar: profile.profile_image_url ?? '',
-        };
-      });
-    },
-    enabled: !!user,
-    staleTime: 1000 * 30,
-  });
-
-  const requests: FriendRequest[] = user?.friendRequests?.filter(r => r.status === 'pending') ?? [];
+  }, [user]);
 
   if (!user) return null;
 
+  const reasonLabel = (reason: string) => {
+    if (reason.startsWith('checkin_')) return '📍 ' + reason.replace('checkin_', '').replace(/_/g, ' ');
+    if (reason === 'quest_complete') return '⚡ Quest completed';
+    if (reason === 'checkin_noxp') return '🏢 Business visit';
+    return '✨ ' + reason.replace(/_/g, ' ');
+  };
+
   return (
-    <>
-      <SlidePanel onClose={onClose}>
-        <PanelHeader title="Friends" onClose={onClose} />
-        <div className="p-4 pb-10 space-y-4">
-          {requests.length > 0 && (
-            <div>
-              <p className="text-xs font-bold text-waygo-textSoft uppercase tracking-wider mb-2">Friend Requests ({requests.length})</p>
-              <div className="space-y-2">
-                {requests.map(req => (
-                  <div key={req.id} className="flex items-center gap-3 p-3 rounded-2xl bg-white" style={{ border: '1.5px solid #E8E8F8' }}>
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold"
-                      style={{ background: req.fromUserColor }}>{req.fromUserName.charAt(0)}</div>
-                    <div className="flex-1">
-                      <p className="font-semibold text-sm text-waygo-text">{req.fromUserName}</p>
-                      <p className="text-xs text-waygo-textSoft">Wants to be your friend</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => { acceptFriendRequest(req.id); }} className="w-9 h-9 rounded-full flex items-center justify-center"
-                        style={{ background: '#E8FFF5', border: '1.5px solid #78E8C8' }}>
-                        <Check size={16} style={{ color: '#00A090' }} />
-                      </button>
-                      <button onClick={() => { declineFriendRequest(req.id); }}
-                        className="w-9 h-9 rounded-full flex items-center justify-center"
-                        style={{ background: '#FFF0F3', border: '1.5px solid #FFD0DC' }}>
-                        <X size={16} style={{ color: '#FF6080' }} />
-                      </button>
-                    </div>
+    <SlidePanel onClose={onClose}>
+      <PanelHeader title="XP & Points Log" onClose={onClose} />
+      <div className="p-5 pb-10 space-y-4">
+        {/* Balance hero */}
+        <div className="rounded-3xl p-6 flex flex-col items-center text-center"
+          style={{ background: 'linear-gradient(135deg,#FFF5F8,#F8F5FF,#F0F8FF)', border: '1.5px solid #E8E0FF' }}>
+          <p className="text-6xl font-black mb-1" style={{ background: rainbowGrad, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            {user.points.toLocaleString()}
+          </p>
+          <p className="text-waygo-textSoft text-sm">points available</p>
+          <div className="flex gap-6 mt-3">
+            <div><p className="font-black text-lg" style={{ color: '#B090FF' }}>{user.xp_total.toLocaleString()}</p><p className="text-xs text-waygo-textSoft">Total XP</p></div>
+            <div><p className="font-black text-lg" style={{ color: '#78E8C8' }}>{user.checkins_total}</p><p className="text-xs text-waygo-textSoft">Check-ins</p></div>
+          </div>
+        </div>
+
+        {/* XP rules */}
+        <div className="rounded-2xl p-4" style={{ background: 'linear-gradient(135deg,#FFF8D6,#FFF0A8)', border: '1px solid #F5D67A' }}>
+          <p className="font-bold text-sm mb-1" style={{ color: '#7A5800' }}>How XP is earned</p>
+          <p className="text-xs leading-relaxed" style={{ color: '#8A6800' }}>
+            ⭐ <strong>Scenic sights</strong> (historic, nature, culture) award XP on check-in.<br/>
+            🏢 <strong>Businesses</strong> (food, nightlife, shopping) do not award XP — look for their Bonus Challenges instead.
+          </p>
+        </div>
+
+        {/* XP Log */}
+        <div>
+          <p className="font-bold text-sm mb-2" style={{ color: 'var(--text-primary)' }}>XP Log</p>
+          {loadingLedger ? (
+            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-14 rounded-xl animate-pulse" style={{ background: 'var(--bg-secondary)' }} />)}</div>
+          ) : ledger.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-3xl mb-2">📋</p>
+              <p className="text-sm text-waygo-textSoft">No XP entries yet. Start exploring!</p>
+            </div>
+          ) : (
+            <div className="rounded-2xl overflow-hidden" style={{ border: '1.5px solid var(--border)' }}>
+              {ledger.slice(0, 30).map((entry, i) => (
+                <div key={entry.id} className="flex items-center justify-between px-4 py-3"
+                  style={{ borderBottom: i < Math.min(ledger.length, 30) - 1 ? '1px solid var(--border)' : 'none',
+                           background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.015)' }}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{reasonLabel(entry.reason)}</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-soft)' }}>
+                      {new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {' · '}
+                      {new Date(entry.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                    </p>
                   </div>
-                ))}
-              </div>
+                  <span className="font-black text-sm ml-3" style={{ color: entry.amount > 0 ? '#00A090' : 'var(--text-soft)' }}>
+                    {entry.amount > 0 ? `+${entry.amount}` : '—'} XP
+                  </span>
+                </div>
+              ))}
             </div>
           )}
+        </div>
+
+        {/* Recent visits with XP */}
+        {user.visitHistory.filter(v => v.pointsEarned > 0).length > 0 && (
           <div>
-            <p className="text-xs font-bold text-waygo-textSoft uppercase tracking-wider mb-2">My Friends ({friendsList.length})</p>
-            {friendsList.length === 0 && (
-              <div className="text-center py-8">
-                <p className="text-3xl mb-2">👥</p>
-                <p className="text-waygo-textSoft text-sm">No friends yet. Add some from the map!</p>
-              </div>
-            )}
-            <div className="space-y-2">
-              {friendsList.map(friend => (
-                <motion.button key={friend.id} whileTap={{ scale: 0.98 }} onClick={() => setSelectedFriend(friend)}
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-white"
-                  style={{ border: '1.5px solid #E8E8F8' }}>
-                  <div className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center text-white font-bold text-lg"
-                    style={{ background: friend.color }}>
-                    {friend.avatar ? <img src={friend.avatar} alt="" className="w-full h-full object-contain" /> : friend.name.charAt(0)}
+            <p className="font-bold text-sm mb-2" style={{ color: 'var(--text-primary)' }}>Sight Visits</p>
+            <div className="rounded-2xl overflow-hidden" style={{ border: '1.5px solid var(--border)' }}>
+              {user.visitHistory.filter(v => v.pointsEarned > 0).slice(0, 10).map((v, i, arr) => (
+                <div key={v.id} className="flex items-center justify-between px-4 py-3"
+                  style={{ borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg">⭐</span>
+                    <div>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{v.placeName}</p>
+                      <p className="text-xs capitalize" style={{ color: 'var(--text-soft)' }}>
+                        {v.placeCategory} · {new Date(v.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex-1 text-left">
-                    <p className="font-bold text-waygo-text">{friend.name}</p>
-                    <p className="text-xs text-waygo-textSoft">Level {friend.level} · {friend.points} pts · {friend.checkins} check-ins</p>
-                  </div>
-                  <ChevronRight size={18} style={{ color: '#C0C0E0' }} />
-                </motion.button>
+                  <span className="font-black text-sm" style={{ color: '#00A090' }}>+{v.pointsEarned} XP</span>
+                </div>
               ))}
             </div>
           </div>
-        </div>
-      </SlidePanel>
-      <AnimatePresence>
-        {selectedFriend && <FriendProfile friend={selectedFriend} onClose={() => setSelectedFriend(null)} onChat={() => { setChatWith(selectedFriend); setSelectedFriend(null); }} />}
-        {chatWith && <ChatPanel friend={chatWith} onClose={() => setChatWith(null)} />}
-      </AnimatePresence>
-    </>
+        )}
+      </div>
+    </SlidePanel>
   );
 }
+
+
+
+
+
+
 
 function AvatarPickerModal({ currentAvatar, onClose, onSelect }: { currentAvatar: string; onClose: () => void; onSelect: (src: string) => void }) {
   const { t } = useApp();

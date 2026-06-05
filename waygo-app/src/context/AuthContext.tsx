@@ -81,21 +81,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const p = await getProfile(session.user.id);
-        if (p) {
-          setProfile(buildUser(p));
-          loadAndSetFriends(session.user.id);
+    let cancelled = false;
+    // Hard ceiling — never block the UI for more than 5 seconds on startup.
+    // If session restore or profile fetch hangs (slow network, stale token,
+    // Supabase outage), we drop the loading state and show the AuthGate so the
+    // user can still sign in or proceed offline.
+    const failsafe = setTimeout(() => { if (!cancelled) setLoading(false); }, 5000);
+
+    const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
+      Promise.race([
+        p,
+        new Promise<null>(res => setTimeout(() => res(null), ms)),
+      ]);
+
+    (async () => {
+      try {
+        const sessionResult = await withTimeout(supabase.auth.getSession(), 4000);
+        const session = sessionResult?.data?.session;
+        if (session?.user && !cancelled) {
+          const p = await withTimeout(getProfile(session.user.id), 4000);
+          if (p && !cancelled) {
+            setProfile(buildUser(p));
+            // Friend loading is best-effort and never blocks the UI.
+            loadAndSetFriends(session.user.id).catch(() => {});
+          }
+        }
+      } catch {
+        /* network error — fall through to AuthGate */
+      } finally {
+        if (!cancelled) {
+          clearTimeout(failsafe);
+          setLoading(false);
         }
       }
-      setLoading(false);
-    }).catch(() => { setLoading(false); });
+    })();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
-        const p = await getProfile(session.user.id);
-        if (p) setProfile(buildUser(p));
+        try {
+          const p = await withTimeout(getProfile(session.user.id), 4000);
+          if (p) setProfile(buildUser(p));
+        } catch { /* ignore */ }
       } else {
         setProfile(null);
         setVisitHistory([]);
@@ -103,7 +129,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      clearTimeout(failsafe);
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -257,6 +287,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       <div className="flex items-center justify-center h-screen" style={{ background: 'var(--bg-primary)' }}>
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: '#B090FF' }} />
+          <p className="text-xs" style={{ color: 'var(--text-soft)' }}>Connecting…</p>
         </div>
       </div>
     );
