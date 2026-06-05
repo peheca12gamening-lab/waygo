@@ -27,7 +27,7 @@ export function WaypointList({
       {waypoints.map((waypoint, index) => {
         const isChecked = checkedWaypoints.includes(waypoint.id);
         const isNext = waypoint.id === nextWaypointId;
-        const emoji = categoryEmoji[waypoint.category] || '📍';
+        const emoji = categoryEmoji[waypoint.category ?? ''] || '📍';
 
         return (
           <motion.div

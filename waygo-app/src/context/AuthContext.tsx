@@ -1,296 +1,289 @@
-import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
+import { supabase } from '../lib/supabase';
+import { auth as dbAuth, getProfile, updateProfile, getFeed, likePost as dbLikePost,
+         upsertUserLocation, getFriends, getFriendRequests,
+         sendFriendRequest as dbSendFriendRequest,
+         acceptFriendRequest as dbAcceptFriendRequest,
+         declineFriendRequest as dbDeclineFriendRequest,
+          sendMessage as dbSendMessage,
+          getMessages as dbGetMessages } from '../lib/db';
+import type { Profile, FeedPost, VisitRecord, RedeemedReward, FriendRequest, Message } from '../types';
+import { stringToColor } from '../lib/utils';
 
-export interface AuthUser {
-  id: string;
-  name: string;
-  email: string;
-  avatar: string;
-  xp_total: number;
-  points: number;
-  level: number;
-  streak_current: number;
-  streak_longest: number;
-  checkins_total: number;
-  quests_completed: number;
-  explored_percentage: number;
-  badges: string[];
-  friends: string[];
-  friendRequests: FriendRequest[];
+type UserProfile = Profile & {
   visitHistory: VisitRecord[];
   redeemedRewards: RedeemedReward[];
-  is_visible_on_map: boolean;
+  friendRequests: FriendRequest[];
+  badges: string[];
+  friends: string[];
+  explored_percentage: number;
+  avatar: string;
+  name: string;
+  level: number;
   created_date: string;
   darkMode: boolean;
-  language: string;
-}
-
-export interface VisitRecord {
-  id: string;
-  placeId: string;
-  placeName: string;
-  placeCategory: string;
-  date: string;
-  pointsEarned: number;
-  photoUrl?: string;
-  likes: number;
-  uploadedToFeed: boolean;
-}
-
-export interface RedeemedReward {
-  id: string;
-  businessName: string;
-  description: string;
-  date: string;
-  pointsSpent: number;
-}
-
-export interface FriendRequest {
-  id: string;
-  fromUserId: string;
-  fromUserName: string;
-  fromUserAvatar: string;
-  fromUserColor: string;
-  date: string;
-  status: 'pending' | 'accepted' | 'declined';
-}
-
-export interface FeedPost {
-  id: string;
-  userId: string;
-  userName: string;
-  userAvatar: string;
-  userAvatarColor: string;
-  placeName: string;
-  placeEmoji: string;
-  photoUrl: string | null;
-  gradientColors: [string, string];
-  likes: number;
-  likedBy: string[];
-  timeAgo: string;
-  date: string;
-}
+};
 
 interface AuthContextType {
-  user: AuthUser | null;
+  user: UserProfile | null;
   isLoggedIn: boolean;
   feedPosts: FeedPost[];
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (name: string, email: string, password: string, avatar?: string) => Promise<{ success: boolean; error?: string }>;
-  logout: () => void;
-  updateUser: (updates: Partial<AuthUser>) => void;
+  logout: () => Promise<void>;
+  updateUser: (updates: Partial<Profile>) => Promise<void>;
   addVisit: (visit: Omit<VisitRecord, 'id' | 'likes' | 'uploadedToFeed'>) => string;
   addRedeemedReward: (reward: Omit<RedeemedReward, 'id'>) => void;
-  addFriend: (friendId: string) => void;
-  sendFriendRequest: (toUserId: string, toUserName: string) => void;
-  acceptFriendRequest: (requestId: string) => void;
-  declineFriendRequest: (requestId: string) => void;
-  uploadToFeed: (visitId: string) => void;
-  likePost: (postId: string) => void;
+  addFriend: (friendId: string) => Promise<void>;
+  sendFriendRequest: (toUserId: string, toUserName: string) => Promise<void>;
+  acceptFriendRequest: (requestId: string) => Promise<void>;
+  declineFriendRequest: (requestId: string) => Promise<void>;
+  removeFriend: (friendId: string) => Promise<void>;
+  uploadToFeed: (visitId: string) => Promise<void>;
+  likePost: (postId: string) => Promise<void>;
+  refreshProfile: () => Promise<void>;
+  sendMessage: (receiverId: string, content: string, options?: { type?: string; imageData?: string }) => Promise<void>;
+  getMessages: (otherUserId: string) => Promise<Message[]>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const STORAGE_KEY = 'waygo_auth';
-const USERS_KEY = 'waygo_users';
-const FEED_KEY = 'waygo_feed';
-
-function loadStoredUsers(): Record<string, { password: string; user: AuthUser }> {
-  try { const s = localStorage.getItem(USERS_KEY); if (s) return JSON.parse(s); } catch {}
-  return {};
-}
-function saveUsers(users: Record<string, { password: string; user: AuthUser }>) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-}
-function loadCurrentUser(): AuthUser | null {
-  try { const s = localStorage.getItem(STORAGE_KEY); if (s) return JSON.parse(s); } catch {}
-  return null;
-}
-function saveCurrentUser(user: AuthUser | null) {
-  if (user) localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-  else localStorage.removeItem(STORAGE_KEY);
-}
-function loadFeed(): FeedPost[] {
-  try { const s = localStorage.getItem(FEED_KEY); if (s) return JSON.parse(s); } catch {}
-  return DEMO_FEED_POSTS;
-}
-function saveFeed(posts: FeedPost[]) {
-  localStorage.setItem(FEED_KEY, JSON.stringify(posts));
-}
-
-const DEMO_FEED_POSTS: FeedPost[] = [
-  { id: 'demo1', userId: 'u1', userName: 'Maria S.', userAvatar: '', userAvatarColor: '#FF90B5', placeName: 'Regional History Museum', placeEmoji: '🏛️', photoUrl: null, gradientColors: ['#FFD0E0', '#E8C8FF'], likes: 24, likedBy: [], timeAgo: '2 m. ago', date: new Date(Date.now() - 2 * 60000).toISOString() },
-  { id: 'demo2', userId: 'u2', userName: 'Petar K.', userAvatar: '/avatars/parrot-blue.png', userAvatarColor: '#7AC8FF', placeName: 'Ancient Theatre', placeEmoji: '🕌', photoUrl: null, gradientColors: ['#C8E8FF', '#C8FFE8'], likes: 11, likedBy: [], timeAgo: '7 m. ago', date: new Date(Date.now() - 7 * 60000).toISOString() },
-  { id: 'demo3', userId: 'u3', userName: 'Elena V.', userAvatar: '', userAvatarColor: '#78E8C8', placeName: 'Kapana Creative District', placeEmoji: '🎨', photoUrl: null, gradientColors: ['#D0FFE8', '#C8F0FF'], likes: 37, likedBy: [], timeAgo: '15 m. ago', date: new Date(Date.now() - 15 * 60000).toISOString() },
-  { id: 'demo4', userId: 'u4', userName: 'Nikolay D.', userAvatar: '/avatars/parrot-fire.png', userAvatarColor: '#FFB878', placeName: 'Džumaya Mosque', placeEmoji: '🕌', photoUrl: null, gradientColors: ['#FFE8C8', '#FFD0E0'], likes: 8, likedBy: [], timeAgo: '43 m. ago', date: new Date(Date.now() - 43 * 60000).toISOString() },
-];
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(loadCurrentUser);
-  const [feedPosts, setFeedPosts] = useState<FeedPost[]>(loadFeed);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [feedPosts, setFeedPosts] = useState<FeedPost[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Apply dark mode class
-  useEffect(() => {
-    if (user?.darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [user?.darkMode]);
+  const [visitHistory, setVisitHistory] = useState<VisitRecord[]>([]);
+  const [redeemedRewards, setRedeemedRewards] = useState<RedeemedReward[]>([]);
 
-  const syncUser = (updated: AuthUser) => {
-    setUser(updated);
-    saveCurrentUser(updated);
-    const users = loadStoredUsers();
-    if (users[updated.email]) { users[updated.email].user = updated; saveUsers(users); }
+  const isLoggedIn = !!profile;
+
+  const buildUser = (p: Profile): UserProfile => ({
+    ...p,
+    visitHistory,
+    redeemedRewards,
+    friendRequests: [],
+    badges: [] as string[],
+    friends: [] as string[],
+    explored_percentage: p.explored_pct,
+    avatar: p.profile_image_url ?? '',
+    name: p.full_name ?? p.username,
+    level: p.current_level,
+    created_date: p.created_at,
+    darkMode: p.dark_mode,
+  });
+
+  const refreshProfile = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setProfile(null); return; }
+    const p = await getProfile(user.id);
+    if (p) setProfile(buildUser(p));
   };
+
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user) {
+        const p = await getProfile(session.user.id);
+        if (p) {
+          setProfile(buildUser(p));
+          loadAndSetFriends(session.user.id);
+        }
+      }
+      setLoading(false);
+    }).catch(() => { setLoading(false); });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        const p = await getProfile(session.user.id);
+        if (p) setProfile(buildUser(p));
+      } else {
+        setProfile(null);
+        setVisitHistory([]);
+        setRedeemedRewards([]);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    getFeed().then(setFeedPosts);
+  }, []);
+
+  const loadAndSetFriends = useCallback(async (userId: string) => {
+    const [friendsData, requestsData] = await Promise.all([
+      getFriends(userId),
+      getFriendRequests(userId),
+    ]);
+    const friendIds = friendsData.map(f =>
+      f.user_id === userId ? f.friend_id : f.user_id
+    );
+    const mappedRequests: FriendRequest[] = requestsData.map(r => ({
+      id: r.id,
+      fromUserId: r.user_id,
+      fromUserName: r.user?.full_name ?? 'Unknown',
+      fromUserAvatar: r.user?.profile_image_url ?? '',
+      fromUserColor: stringToColor(r.user?.full_name ?? 'Unknown'),
+      date: r.created_at,
+      status: r.status as 'pending',
+    }));
+    setProfile(prev => prev ? {
+      ...prev,
+      friends: friendIds,
+      friendRequests: mappedRequests,
+    } : null);
+  }, []);
+
+  const withTimeout = <T,>(promise: Promise<T>, ms: number) =>
+    Promise.race([
+      promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Request timed out')), ms)),
+    ]);
 
   const login = async (email: string, password: string) => {
-    const users = loadStoredUsers();
-    const record = users[email.toLowerCase()];
-    if (!record) return { success: false, error: 'No account found with this email.' };
-    if (record.password !== password) return { success: false, error: 'Incorrect password.' };
-    syncUser(record.user);
-    return { success: true };
+    try {
+      const result = await withTimeout(dbAuth.login(email, password), 10000);
+      if (result.success) {
+        const p = await withTimeout(getProfile(result.user!.id), 10000);
+        if (p) {
+          setProfile(buildUser(p));
+          loadAndSetFriends(result.user!.id);
+        }
+      }
+      return result;
+    } catch {
+      return { success: false as const, error: 'Connection timed out. Check your network or Supabase auth settings.' };
+    }
   };
 
-  const register = async (name: string, email: string, password: string, avatar?: string) => {
-    const users = loadStoredUsers();
-    const key = email.toLowerCase();
-    if (users[key]) return { success: false, error: 'An account with this email already exists.' };
-    const newUser: AuthUser = {
-      id: `user-${Date.now()}`,
-      name, email: key,
-      avatar: avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`,
-      xp_total: 0, points: 0, level: 1,
-      streak_current: 0, streak_longest: 0,
-      checkins_total: 0, quests_completed: 0, explored_percentage: 0,
-      badges: [], friends: [], friendRequests: [],
-      visitHistory: [], redeemedRewards: [],
-      is_visible_on_map: true,
-      created_date: new Date().toISOString(),
-      darkMode: false, language: 'en',
-    };
-    users[key] = { password, user: newUser };
-    saveUsers(users);
-    syncUser(newUser);
-    return { success: true };
+  const register = async (name: string, email: string, password: string, _avatar?: string) => {
+    try {
+      const username = name.toLowerCase().replace(/[^a-z0-9]/g, '') + Math.floor(Math.random() * 1000);
+      const result = await withTimeout(dbAuth.register(email, password, name, username), 10000);
+      if (result.success && result.user) {
+        const p = await withTimeout(getProfile(result.user.id), 10000);
+        if (p) {
+          setProfile(buildUser(p));
+          loadAndSetFriends(result.user.id);
+        }
+      }
+      return result;
+    } catch {
+      return { success: false as const, error: 'Connection timed out. Check your network or Supabase auth settings.' };
+    }
   };
 
-  const logout = () => { setUser(null); saveCurrentUser(null); };
+  const logout = async () => {
+    if (profile) {
+      await upsertUserLocation(profile.id, 0, 0).catch(() => {});
+    }
+    await dbAuth.logout();
+    setProfile(null);
+    setVisitHistory([]);
+    setRedeemedRewards([]);
+  };
 
-  const updateUser = (updates: Partial<AuthUser>) => {
-    if (!user) return;
-    syncUser({ ...user, ...updates });
+  const updateUserFn = async (updates: Partial<Profile>) => {
+    if (!profile) return;
+    const updated = await updateProfile(profile.id, updates);
+    if (updated) setProfile(prev => prev ? { ...buildUser(updated), visitHistory: prev.visitHistory, redeemedRewards: prev.redeemedRewards, friendRequests: prev.friendRequests } : null);
   };
 
   const addVisit = (visit: Omit<VisitRecord, 'id' | 'likes' | 'uploadedToFeed'>): string => {
-    if (!user) return '';
     const id = `visit-${Date.now()}`;
     const record: VisitRecord = { ...visit, id, likes: 0, uploadedToFeed: false };
-    syncUser({
-      ...user,
-      visitHistory: [record, ...user.visitHistory],
-      checkins_total: user.checkins_total + 1,
-      // Points only added AFTER uploading to feed (for sights)
-      xp_total: user.xp_total + 10,
-    });
+    setVisitHistory(prev => [record, ...prev]);
     return id;
   };
 
-  const uploadToFeed = (visitId: string) => {
-    if (!user) return;
-    const visit = user.visitHistory.find(v => v.id === visitId);
-    if (!visit || visit.uploadedToFeed) return;
-
-    const isSight = visit.placeCategory === 'museum' || visit.placeCategory === 'cultural';
-    const pointsEarned = isSight ? 50 : 0;
-
-    // Create feed post
-    const post: FeedPost = {
-      id: `post-${Date.now()}`,
-      userId: user.id,
-      userName: user.name,
-      userAvatar: user.avatar,
-      userAvatarColor: '#B090FF',
-      placeName: visit.placeName,
-      placeEmoji: visit.placeCategory === 'museum' || visit.placeCategory === 'cultural' ? '🏛️' : '☕',
-      photoUrl: visit.photoUrl || null,
-      gradientColors: ['#E8D8FF', '#D8E8FF'],
-      likes: 0,
-      likedBy: [],
-      timeAgo: 'Just now',
-      date: new Date().toISOString(),
-    };
-
-    const updatedFeed = [post, ...feedPosts];
-    setFeedPosts(updatedFeed);
-    saveFeed(updatedFeed);
-
-    // Mark visit as uploaded + award points
-    const updatedHistory = user.visitHistory.map(v =>
-      v.id === visitId ? { ...v, uploadedToFeed: true, pointsEarned } : v
-    );
-    syncUser({
-      ...user,
-      visitHistory: updatedHistory,
-      points: user.points + pointsEarned,
-      xp_total: user.xp_total + pointsEarned * 2,
-    });
+  const uploadToFeed = async (visitId: string) => {
+    setVisitHistory(prev => prev.map(v =>
+      v.id === visitId ? { ...v, uploadedToFeed: true, pointsEarned: 50 } : v
+    ));
   };
 
-  const likePost = (postId: string) => {
-    if (!user) return;
-    const updated = feedPosts.map(p => {
-      if (p.id !== postId) return p;
-      const alreadyLiked = p.likedBy.includes(user.id);
-      return {
-        ...p,
-        likes: alreadyLiked ? p.likes - 1 : p.likes + 1,
-        likedBy: alreadyLiked ? p.likedBy.filter(id => id !== user.id) : [...p.likedBy, user.id],
-      };
-    });
-    setFeedPosts(updated);
-    saveFeed(updated);
+  const likePost = async (postId: string) => {
+    if (!profile) return;
+    await dbLikePost(postId, profile.id);
+    setFeedPosts(prev => prev.map(p =>
+      p.id === postId ? { ...p, likes_count: p.likes_count + 1 } : p
+    ));
   };
 
-  const addFriend = (friendId: string) => {
-    if (!user || user.friends.includes(friendId)) return;
-    updateUser({ friends: [...user.friends, friendId] });
+  const addFriend = async (friendId: string) => {
+    if (!profile) return;
+    await dbSendFriendRequest(profile.id, friendId);
   };
 
-  const sendFriendRequest = (_toUserId: string, toUserName: string) => {
-    // In a real app this would write to the other user's record
-    // For demo purposes we just track it locally
-    console.log('Friend request sent to', toUserName);
+  const sendFriendRequestFn = async (toUserId: string, _toUserName: string) => {
+    if (!profile) return;
+    await dbSendFriendRequest(profile.id, toUserId);
   };
 
-  const acceptFriendRequest = (requestId: string) => {
-    if (!user) return;
-    const req = user.friendRequests.find(r => r.id === requestId);
-    if (!req) return;
-    const updated = {
-      ...user,
-      friends: [...user.friends, req.fromUserId],
-      friendRequests: user.friendRequests.map(r => r.id === requestId ? { ...r, status: 'accepted' as const } : r),
-    };
-    syncUser(updated);
+  const acceptFriendRequestFn = async (requestId: string) => {
+    await dbAcceptFriendRequest(requestId);
+    if (profile) loadAndSetFriends(profile.id);
   };
 
-  const declineFriendRequest = (requestId: string) => {
-    if (!user) return;
-    updateUser({
-      friendRequests: user.friendRequests.map(r => r.id === requestId ? { ...r, status: 'declined' as const } : r),
-    });
+  const declineFriendRequestFn = async (requestId: string) => {
+    await dbDeclineFriendRequest(requestId);
+    if (profile) loadAndSetFriends(profile.id);
+  };
+
+  const removeFriendFn = async (friendId: string) => {
+    if (!profile) return;
+    const { removeFriend } = await import('../lib/db/friends');
+    await removeFriend(profile.id, friendId);
+    if (profile) loadAndSetFriends(profile.id);
   };
 
   const addRedeemedReward = (reward: Omit<RedeemedReward, 'id'>) => {
-    if (!user) return;
     const record: RedeemedReward = { ...reward, id: `reward-${Date.now()}` };
-    syncUser({ ...user, redeemedRewards: [record, ...user.redeemedRewards], points: Math.max(0, user.points - reward.pointsSpent) });
+    setRedeemedRewards(prev => [record, ...prev]);
   };
 
+  const sendMessageFn = useCallback(async (receiverId: string, content: string, options?: { type?: string; imageData?: string }) => {
+    if (!profile) return;
+    await dbSendMessage(profile.id, receiverId, content, options?.type ? { type: options.type, imageData: options.imageData } : undefined);
+  }, [profile]);
+
+  const getMessagesFn = useCallback(async (otherUserId: string): Promise<Message[]> => {
+    if (!profile) return [];
+    return await dbGetMessages(profile.id, otherUserId);
+  }, [profile]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen" style={{ background: 'var(--bg-primary)' }}>
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: '#B090FF' }} />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <AuthContext.Provider value={{ user, isLoggedIn: !!user, feedPosts, login, register, logout, updateUser, addVisit, addRedeemedReward, addFriend, sendFriendRequest, acceptFriendRequest, declineFriendRequest, uploadToFeed, likePost }}>
+    <AuthContext.Provider value={{
+      user: profile,
+      isLoggedIn,
+      feedPosts,
+      login,
+      register,
+      logout,
+      updateUser: updateUserFn,
+      addVisit,
+      addRedeemedReward,
+      addFriend,
+      sendFriendRequest: sendFriendRequestFn,
+      acceptFriendRequest: acceptFriendRequestFn,
+      declineFriendRequest: declineFriendRequestFn,
+      removeFriend: removeFriendFn,
+      uploadToFeed,
+      likePost,
+      refreshProfile,
+      sendMessage: sendMessageFn,
+      getMessages: getMessagesFn,
+    }}>
       {children}
     </AuthContext.Provider>
   );

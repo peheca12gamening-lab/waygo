@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { DEMO_USER } from '../data/seed';
 
 interface LocationState {
   lat: number;
@@ -10,10 +9,13 @@ interface LocationState {
   isDemoMode: boolean;
 }
 
+const PLOVDIV_LAT = 42.1420;
+const PLOVDIV_LNG = 24.7490;
+
 export function useLocation() {
   const [location, setLocation] = useState<LocationState>({
-    lat: DEMO_USER.last_location_lat || 42.1420,
-    lng: DEMO_USER.last_location_lng || 24.7490,
+    lat: PLOVDIV_LAT,
+    lng: PLOVDIV_LNG,
     accuracy: null,
     isLoading: true,
     error: null,

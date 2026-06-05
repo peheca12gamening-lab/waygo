@@ -2,6 +2,9 @@ import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Mail, Lock, User, Eye, EyeOff, ArrowRight, Camera } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useApp } from '../context/AppContext';
+import { PasswordStrength } from '../components/auth/PasswordStrength';
+import { getPasswordStrength, validateEmail, validatePassword, validateUsername } from '../lib/validation/auth';
 
 interface RegisterPageProps { onSwitchToLogin: () => void; }
 
@@ -16,14 +19,14 @@ const PARROT_AVATARS = [
 
 export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
   const { register } = useAuth();
-  
+  const { t, language } = useApp();
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  // Avatar state – parrot or custom upload
   const [selectedAvatar, setSelectedAvatar] = useState(PARROT_AVATARS[0].src);
   const [customAvatar, setCustomAvatar] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -31,6 +34,7 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
   const [isLoading, setIsLoading] = useState(false);
 
   const activeAvatar = customAvatar || selectedAvatar;
+  const passwordStrength = getPasswordStrength(password);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -42,15 +46,15 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
 
   const handleSubmit = async () => {
     setError('');
-    if (!name.trim()) return setError('Please enter your name.');
-    if (!email.trim() || !email.includes('@')) return setError('Please enter a valid email address.');
-    if (password.length < 6) return setError('Password must be at least 6 characters.');
-    if (password !== confirmPassword) return setError('Passwords do not match.');
+    if (!validateUsername(name)) return setError(t.nameRequired);
+    if (!validateEmail(email)) return setError(t.emailInvalid);
+    const passwordError = validatePassword(password);
+    if (passwordError) return setError(passwordError);
+    if (password !== confirmPassword) return setError(t.passwordsNoMatch);
     setIsLoading(true);
-    // Pass the chosen avatar (parrot or custom) into register
     const result = await register(name.trim(), email.trim(), password, activeAvatar);
     setIsLoading(false);
-    if (!result.success) setError(result.error || 'Registration failed.');
+    if (!result.success) setError(result.error || t.registerFailed);
   };
 
   const inputStyle = {
@@ -59,7 +63,7 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--rainbow-bg)' }}>
+    <div key={language} className="min-h-screen flex flex-col" style={{ background: 'var(--rainbow-bg)' }}>
       <div className="absolute top-0 left-0 w-64 h-64 rounded-full opacity-30 pointer-events-none"
         style={{ background: 'radial-gradient(circle,#FFB0C8,transparent 70%)', transform: 'translate(-30%,-30%)' }} />
       <div className="absolute top-0 right-0 w-56 h-56 rounded-full opacity-25 pointer-events-none"
@@ -68,7 +72,6 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 relative z-10">
         <motion.div initial={{ opacity: 0, y: -30 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm">
 
-          {/* Logo */}
           <div className="flex flex-col items-center mb-7">
             <motion.div animate={{ y: [0,-8,0], rotate: [0,3,0] }} transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
               className="w-20 h-20 rounded-3xl flex items-center justify-center text-4xl mb-3"
@@ -76,14 +79,12 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
               🗺️
             </motion.div>
             <h1 className="text-3xl font-black" style={{ background: 'linear-gradient(135deg,#FF90B5,#B090FF,#7AC8FF)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>WayGo</h1>
-            <p className="text-waygo-textSoft text-sm mt-1">Explore Plovdiv. Earn rewards.</p>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-soft)' }}>{t.registerSubtitle}</p>
           </div>
 
-          <h2 className="text-xl font-bold text-waygo-text mb-4 text-center">Create your account</h2>
+          <h2 className="text-xl font-bold mb-4 text-center" style={{ color: 'var(--text-primary)' }}>{t.registerTitle}</h2>
 
-          {/* AVATAR PREVIEW + PICKER */}
           <div className="flex flex-col items-center mb-5">
-            {/* Big preview of chosen avatar */}
             <div className="relative mb-3">
               <div className="w-20 h-20 rounded-full overflow-hidden p-0.5"
                 style={{ background: 'linear-gradient(135deg,#FF90B5,#B090FF,#7AC8FF,#78E8C8)' }}>
@@ -91,7 +92,6 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
                   <img src={activeAvatar} alt="avatar" className="w-full h-full object-cover" />
                 </div>
               </div>
-              {/* Upload button overlay */}
               <button onClick={() => fileInputRef.current?.click()}
                 className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full flex items-center justify-center border-2 border-white"
                 style={{ background: 'linear-gradient(135deg,#B090FF,#7AC8FF)' }}>
@@ -100,8 +100,7 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
               <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
             </div>
 
-            {/* Parrot picker row */}
-            <p className="text-xs font-semibold text-waygo-textSoft mb-2 uppercase tracking-wider">Or choose an explorer</p>
+            <p className="text-xs font-semibold mb-2 uppercase tracking-wider" style={{ color: 'var(--text-soft)' }}>{t.or} {t.explorerParrots}</p>
             <div className="flex gap-2">
               {PARROT_AVATARS.map((p) => {
                 const isActive = !customAvatar && selectedAvatar === p.src;
@@ -110,7 +109,7 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
                     onClick={() => { setSelectedAvatar(p.src); setCustomAvatar(null); }}
                     className="w-10 h-10 rounded-full overflow-hidden transition-all"
                     style={{
-                      border: isActive ? `2.5px solid ${p.color}` : '2px solid #E0E0F5',
+                      border: isActive ? `2.5px solid ${p.color}` : '2px solid var(--border)',
                       boxShadow: isActive ? `0 3px 12px ${p.color}55` : 'none',
                       transform: isActive ? 'scale(1.15)' : 'scale(1)',
                       background: 'var(--bg-input)',
@@ -122,26 +121,27 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
             </div>
           </div>
 
-          <div className="space-y-3">
+          <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} autoComplete="off">
             <div className="relative">
               <User size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: '#B090FF' }} />
-              <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" style={inputStyle} />
+              <input autoComplete="off" type="text" value={name} onChange={e => setName(e.target.value)} placeholder={t.namePlaceholder} style={inputStyle} />
             </div>
             <div className="relative">
               <Mail size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: '#B090FF' }} />
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email address" style={inputStyle} />
+              <input autoComplete="off" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={t.emailPlaceholder} style={inputStyle} />
             </div>
             <div className="relative">
               <Lock size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: '#B090FF' }} />
-              <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Password (min. 6 chars)" style={{ ...inputStyle, paddingRight: 44 }} />
+              <input autoComplete="new-password" type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={t.passwordPlaceholder} style={{ ...inputStyle, paddingRight: 44 }} />
               <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2" style={{ color: '#9898C0' }}>
                 {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
               </button>
             </div>
+            {password && <PasswordStrength strength={passwordStrength} password={password} />}
             <div className="relative">
               <Lock size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: '#B090FF' }} />
-              <input type={showConfirm ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm password"
-                onKeyDown={e => e.key === 'Enter' && handleSubmit()} style={{ ...inputStyle, paddingRight: 44 }} />
+              <input autoComplete="new-password" type={showConfirm ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder={t.confirmPasswordPlaceholder}
+                style={{ ...inputStyle, paddingRight: 44 }} />
               <button type="button" onClick={() => setShowConfirm(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2" style={{ color: '#9898C0' }}>
                 {showConfirm ? <EyeOff size={17} /> : <Eye size={17} />}
               </button>
@@ -155,19 +155,19 @@ export function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
               </motion.p>
             )}
 
-            <motion.button whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={isLoading}
+            <motion.button whileTap={{ scale: 0.97 }} type="submit" disabled={isLoading}
               className="w-full py-4 rounded-2xl text-white font-bold flex items-center justify-center gap-2 disabled:opacity-60"
               style={{ background: 'linear-gradient(135deg,#FF90B5,#B090FF,#7AC8FF)', boxShadow: '0 6px 24px rgba(176,144,255,0.4)' }}>
               {isLoading ? <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                : <> Create Account <ArrowRight size={18} /> </>}
+                : <>{t.createAccount} <ArrowRight size={18} /></>}
             </motion.button>
-          </div>
+          </form>
 
           <div className="mt-5 text-center">
-            <p className="text-waygo-textSoft text-sm">
-              Already have an account?{' '}
+            <p className="text-sm" style={{ color: 'var(--text-soft)' }}>
+              {t.alreadyHave}{' '}
               <button onClick={onSwitchToLogin} className="font-bold underline underline-offset-2" style={{ color: '#B090FF' }}>
-                Login from here
+                {t.loginHere}
               </button>
             </p>
           </div>

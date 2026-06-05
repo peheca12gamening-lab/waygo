@@ -1,11 +1,27 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MapPin, Settings, X, UserPlus, ChevronRight, Camera, Heart, Check } from 'lucide-react';
-import { useAuth, FriendRequest } from '../context/AuthContext';
-import { useApp, LangCode } from '../context/AppContext';
+import { MapPin, Settings, X, UserPlus, ChevronRight, Camera, Heart, Check, Send, MessageCircle, Smile, PenTool } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { useApp } from '../context/AppContext';
+import type { LangCode } from '../lib/translations';
 import { useUI } from '../context/UIContext';
-import { BADGES } from '../data/seed';
+import { getUserBadges, searchProfiles, getFriends, subscribeToMessages, markMessagesRead, subscribeToTyping, setTyping, conversationId } from '../lib/db';
+import { stringToColor } from '../lib/utils';
+import type { FriendRequest, Message } from '../types';
 import { XPBar, StreakCard } from '../components/shared';
+import { useStreak } from '../hooks/useStreak';
+
+const BADGES = [
+  { id: 'first-steps', name: 'First Steps', description: 'Complete your first check-in', icon: '👣', difficulty: 'Easy' },
+  { id: 'coffee-lover', name: 'Coffee Lover', description: 'Visit 3 cafés', icon: '☕', difficulty: 'Easy' },
+  { id: 'week-warrior', name: 'Week Warrior', description: 'Maintain a 7-day streak', icon: '🔥', difficulty: 'Medium' },
+  { id: 'culture-vulture', name: 'Culture Vulture', description: 'Visit 3 museums or cultural sites', icon: '🏛', difficulty: 'Medium' },
+  { id: 'night-owl', name: 'Night Owl', description: 'Check in after 22:00', icon: '🦉', difficulty: 'Hard' },
+  { id: 'early-bird', name: 'Early Bird', description: 'Check in before 08:00', icon: '🐦', difficulty: 'Hard' },
+  { id: 'quest-master', name: 'Quest Master', description: 'Complete 5 quests', icon: '⚔', difficulty: 'Hard' },
+  { id: 'explorer', name: 'Explorer', description: 'Explore 50% of Plovdiv', icon: '🗺', difficulty: 'Legendary' },
+];
 
 const PARROT_AVATARS = [
   { src: '/avatars/parrot-holo.png',   label: 'Holographic', color: '#78E8C8' },
@@ -18,18 +34,8 @@ const PARROT_AVATARS = [
 
 const rainbowGrad = 'linear-gradient(135deg,#FF90B5,#B090FF,#7AC8FF,#78E8C8)';
 
-// Demo friend data
-const DEMO_FRIENDS = [
-  { id: 'u1', name: 'Maria S.', color: '#FF90B5', level: 8, points: 420, checkins: 67, avatar: '', visitHistory: [{placeName:'Regional History Museum',date:'2024-01-10',pointsEarned:50}], badges: ['first-steps','coffee-lover'] },
-  { id: 'u2', name: 'Petar K.', color: '#7AC8FF', level: 7, points: 360, checkins: 52, avatar: '/avatars/parrot-blue.png', visitHistory: [{placeName:'Ancient Theatre',date:'2024-01-09',pointsEarned:50}], badges: ['first-steps'] },
-  { id: 'u3', name: 'Elena V.', color: '#78E8C8', level: 6, points: 290, checkins: 41, avatar: '', visitHistory: [{placeName:'Kapana Creative District',date:'2024-01-08',pointsEarned:0}], badges: ['first-steps','week-warrior'] },
-];
 
-const DEMO_INCOMING_REQUESTS: FriendRequest[] = [
-  { id: 'req1', fromUserId: 'u4', fromUserName: 'Nikolay D.', fromUserAvatar: '', fromUserColor: '#FFB878', date: new Date(Date.now() - 3600000).toISOString(), status: 'pending' },
-];
 
-// ── BottomModal wrapper ──────────────────────────────────────────────────────
 function BottomModal({ children, onClose, tall = false }: { children: React.ReactNode; onClose: () => void; tall?: boolean }) {
   const { openModal, closeModal } = useUI();
   useEffect(() => { openModal(); return () => closeModal(); }, [openModal, closeModal]);
@@ -48,7 +54,6 @@ function BottomModal({ children, onClose, tall = false }: { children: React.Reac
   );
 }
 
-// ── Full-screen slide panel ──────────────────────────────────────────────────
 function SlidePanel({ children }: { children: React.ReactNode; onClose?: () => void }) {
   const { openModal, closeModal } = useUI();
   useEffect(() => { openModal(); return () => closeModal(); }, [openModal, closeModal]);
@@ -62,7 +67,6 @@ function SlidePanel({ children }: { children: React.ReactNode; onClose?: () => v
   );
 }
 
-// ── Panel header ─────────────────────────────────────────────────────────────
 function PanelHeader({ title, onClose }: { title: string; onClose: () => void }) {
   return (
     <div className="flex items-center justify-between px-5 pt-6 pb-4 sticky top-0 z-10"
@@ -76,7 +80,6 @@ function PanelHeader({ title, onClose }: { title: string; onClose: () => void })
   );
 }
 
-// ── BADGE DETAIL PANEL ───────────────────────────────────────────────────────
 const BADGE_DETAILS: Record<string, { difficulty: string; color: string; maxValue: number; unit: string; category: string }> = {
   'first-steps':    { difficulty: 'Easy',   color: '#78E8C8', maxValue: 1,  unit: 'check-in',  category: 'Explorer' },
   'coffee-lover':   { difficulty: 'Easy',   color: '#FFB878', maxValue: 3,  unit: 'café visit', category: 'Foodie' },
@@ -88,14 +91,12 @@ const BADGE_DETAILS: Record<string, { difficulty: string; color: string; maxValu
   'explorer':       { difficulty: 'Legendary', color: '#B090FF', maxValue: 50, unit: '% explored', category: 'Explorer' },
 };
 
-function BadgeDetailPanel({ badgeId, onClose }: { badgeId: string; onClose: () => void }) {
+function BadgeDetailPanel({ badgeId, earned, onClose }: { badgeId: string; earned: boolean; onClose: () => void }) {
   const { user } = useAuth();
   const badge = BADGES.find(b => b.id === badgeId);
   const detail = BADGE_DETAILS[badgeId] || { difficulty: 'Medium', color: '#B090FF', maxValue: 1, unit: '', category: 'General' };
   if (!badge) return null;
 
-  const earned = user?.badges.includes(badgeId) ?? false;
-  // Compute current progress from user stats
   const getProgress = (): number => {
     if (!user) return 0;
     if (badgeId === 'first-steps') return Math.min(user.checkins_total, 1);
@@ -103,13 +104,12 @@ function BadgeDetailPanel({ badgeId, onClose }: { badgeId: string; onClose: () =
     if (badgeId === 'week-warrior') return Math.min(user.streak_current, 7);
     if (badgeId === 'culture-vulture') return Math.min(user.visitHistory.filter(v => v.placeCategory === 'museum').length, 3);
     if (badgeId === 'quest-master') return Math.min(user.quests_completed, 5);
-    if (badgeId === 'explorer') return Math.min(user.explored_percentage, 50);
+    if (badgeId === 'explorer') return Math.min(user.explored_pct, 50);
     return earned ? detail.maxValue : 0;
   };
 
   const current = getProgress();
   const pct = Math.round((current / detail.maxValue) * 100);
-
   const difficultyColors: Record<string, string> = { Easy: '#78E8C8', Medium: '#FFB878', Hard: '#FF90B5', Legendary: '#B090FF' };
   const diffColor = difficultyColors[detail.difficulty] || '#B090FF';
 
@@ -117,24 +117,17 @@ function BadgeDetailPanel({ badgeId, onClose }: { badgeId: string; onClose: () =
     <SlidePanel onClose={onClose}>
       <PanelHeader title="Badge Details" onClose={onClose} />
       <div className="p-5 pb-10 space-y-5">
-        {/* Badge card */}
         <div className="rounded-3xl p-8 flex flex-col items-center text-center"
           style={{ background: earned ? `linear-gradient(135deg,${detail.color}15,${detail.color}08)` : '#F5F5FF', border: `2px solid ${earned ? detail.color : '#E8E8F8'}` }}>
           <div className="text-7xl mb-4 filter" style={{ filter: earned ? 'none' : 'grayscale(100%) opacity(0.4)' }}>{badge.icon}</div>
           <h3 className="text-2xl font-black text-waygo-text mb-1">{badge.name}</h3>
           <p className="text-waygo-textSoft text-sm mb-3">{badge.description}</p>
           <div className="flex gap-2 flex-wrap justify-center">
-            <span className="px-3 py-1 rounded-full text-xs font-bold" style={{ background: `${diffColor}20`, color: diffColor }}>
-              {detail.difficulty}
-            </span>
-            <span className="px-3 py-1 rounded-full text-xs font-bold" style={{ background: '#F0F0FF', color: '#9090C0' }}>
-              {detail.category}
-            </span>
+            <span className="px-3 py-1 rounded-full text-xs font-bold" style={{ background: `${diffColor}20`, color: diffColor }}>{detail.difficulty}</span>
+            <span className="px-3 py-1 rounded-full text-xs font-bold" style={{ background: '#F0F0FF', color: '#9090C0' }}>{detail.category}</span>
             {earned && <span className="px-3 py-1 rounded-full text-xs font-bold" style={{ background: '#E8FFF5', color: '#00A090' }}>✅ Earned</span>}
           </div>
         </div>
-
-        {/* Progress */}
         <div className="rounded-2xl p-5 bg-white" style={{ border: '1.5px solid #E8E8F8' }}>
           <div className="flex justify-between items-center mb-3">
             <p className="font-bold text-waygo-text">Progress</p>
@@ -146,8 +139,6 @@ function BadgeDetailPanel({ badgeId, onClose }: { badgeId: string; onClose: () =
           </div>
           <p className="text-xs text-waygo-textSoft text-right">{current} / {detail.maxValue} {detail.unit}{current !== 1 ? 's' : ''}</p>
         </div>
-
-        {/* How to earn */}
         <div className="rounded-2xl p-5 bg-white" style={{ border: '1.5px solid #E8E8F8' }}>
           <p className="font-bold text-waygo-text mb-2">How to earn</p>
           <p className="text-sm text-waygo-textSoft">{badge.description}. Keep exploring Plovdiv and checking in at places to unlock this badge!</p>
@@ -157,20 +148,27 @@ function BadgeDetailPanel({ badgeId, onClose }: { badgeId: string; onClose: () =
   );
 }
 
-// ── BADGES PANEL ─────────────────────────────────────────────────────────────
 function BadgesPanel({ onClose }: { onClose: () => void }) {
-  const { user } = useAuth();
+  const [userBadges, setUserBadges] = useState<string[]>([]);
   const [selectedBadge, setSelectedBadge] = useState<string | null>(null);
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (user) {
+      getUserBadges(user.id).then(data => setUserBadges(data.map(b => b.badge_id)));
+    }
+  }, [user]);
+
   if (!user) return null;
   const difficultyColors: Record<string, string> = { Easy: '#78E8C8', Medium: '#FFB878', Hard: '#FF90B5', Legendary: '#B090FF' };
 
   return (
     <>
       <SlidePanel onClose={onClose}>
-        <PanelHeader title={`Badges (${user.badges.length}/${BADGES.length})`} onClose={onClose} />
+        <PanelHeader title={`Badges (${userBadges.length}/${BADGES.length})`} onClose={onClose} />
         <div className="p-4 pb-10 grid grid-cols-2 gap-3">
           {BADGES.map(badge => {
-            const earned = user.badges.includes(badge.id);
+            const earned = userBadges.includes(badge.id);
             const detail = BADGE_DETAILS[badge.id] || { difficulty: 'Medium', color: '#B090FF' };
             const diffColor = difficultyColors[detail.difficulty] || '#B090FF';
             return (
@@ -187,23 +185,17 @@ function BadgesPanel({ onClose }: { onClose: () => void }) {
         </div>
       </SlidePanel>
       <AnimatePresence>
-        {selectedBadge && <BadgeDetailPanel badgeId={selectedBadge} onClose={() => setSelectedBadge(null)} />}
+        {selectedBadge && <BadgeDetailPanel badgeId={selectedBadge} earned={userBadges.includes(selectedBadge)} onClose={() => setSelectedBadge(null)} />}
       </AnimatePresence>
     </>
   );
 }
 
-// ── CHECK-INS PANEL ──────────────────────────────────────────────────────────
 function CheckInsPanel({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
   if (!user) return null;
-
   const visits = user.visitHistory;
-
-
-  const isExpired = (date: string) => {
-    return Date.now() - new Date(date).getTime() > 24 * 3600000;
-  };
+  const isExpired = (date: string) => Date.now() - new Date(date).getTime() > 24 * 3600000;
 
   return (
     <SlidePanel onClose={onClose}>
@@ -217,7 +209,6 @@ function CheckInsPanel({ onClose }: { onClose: () => void }) {
         )}
         {visits.map(v => (
           <div key={v.id} className="rounded-3xl overflow-hidden bg-white" style={{ border: '1.5px solid #F0EEF8', boxShadow: '0 2px 12px rgba(176,144,255,0.08)' }}>
-            {/* Photo */}
             {v.photoUrl ? (
               <img src={v.photoUrl} alt="check-in" className="w-full aspect-[4/3] object-cover" />
             ) : (
@@ -227,22 +218,18 @@ function CheckInsPanel({ onClose }: { onClose: () => void }) {
                 <p className="text-xs text-waygo-textSoft">📍 {v.placeName}</p>
               </div>
             )}
-            {/* Info */}
             <div className="p-4">
               <div className="flex items-center justify-between mb-1">
                 <p className="font-bold text-waygo-text text-sm">{v.placeName}</p>
                 {v.pointsEarned > 0 && <span className="text-xs font-bold" style={{ color: '#00A090' }}>+{v.pointsEarned} pts</span>}
               </div>
               <p className="text-xs text-waygo-textSoft mb-2">{new Date(v.date).toLocaleDateString()} · {new Date(v.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-
               <div className="flex items-center justify-between">
-                {/* Likes */}
                 <div className="flex items-center gap-1.5">
                   <Heart size={16} style={{ color: '#FF90B5', fill: '#FF90B5' }} />
                   <span className="text-sm font-semibold text-waygo-textMid">{v.likes}</span>
                   <span className="text-xs text-waygo-textSoft">likes</span>
                 </div>
-                {/* Status */}
                 {isExpired(v.date) ? (
                   <span className="text-xs text-waygo-textSoft bg-gray-100 px-2 py-1 rounded-full">Expired (24h)</span>
                 ) : v.uploadedToFeed ? (
@@ -259,7 +246,6 @@ function CheckInsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── POINTS PANEL ─────────────────────────────────────────────────────────────
 function PointsPanel({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
   if (!user) return null;
@@ -301,75 +287,438 @@ function PointsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── FRIEND PROFILE ────────────────────────────────────────────────────────────
-function FriendProfile({ friend, onClose }: { friend: typeof DEMO_FRIENDS[0]; onClose: () => void }) {
+function FriendProfile({ friend, onClose, onChat }: { friend: FriendDisplay; onClose: () => void; onChat: () => void }) {
   return (
     <SlidePanel onClose={onClose}>
       <PanelHeader title={friend.name} onClose={onClose} />
       <div className="p-5 pb-10 space-y-4">
-        {/* Avatar + stats */}
         <div className="flex flex-col items-center py-4">
           <div className="w-20 h-20 rounded-full flex items-center justify-center text-white text-3xl font-black mb-3 overflow-hidden"
             style={{ background: friend.color, border: `3px solid ${friend.color}` }}>
             {friend.avatar ? <img src={friend.avatar} alt="" className="w-full h-full object-contain" /> : friend.name.charAt(0)}
           </div>
-          <h3 className="text-xl font-black text-waygo-text">{friend.name}</h3>
-          <p className="text-waygo-textSoft text-sm">Level {friend.level} Explorer</p>
+          <h3 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>{friend.name}</h3>
+          <p className="text-sm" style={{ color: 'var(--text-soft)' }}>Level {friend.level} Explorer</p>
         </div>
         <div className="grid grid-cols-3 gap-3">
-          {[['⭐', friend.points, 'Points'],['📍', friend.checkins, 'Check-ins'],['🏆', friend.badges.length, 'Badges']].map(([icon, val, label]) => (
+          {[['⭐', friend.points, 'Points'],['📍', friend.checkins, 'Check-ins'],['🏆', String(friend.level), 'Level']].map(([icon, val, label]) => (
             <div key={String(label)} className="rounded-2xl p-3 text-center" style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)' }}>
               <div className="text-xl mb-1">{icon}</div>
-              <p className="font-black text-waygo-text">{val}</p>
-              <p className="text-xs text-waygo-textSoft">{label}</p>
+              <p className="font-black" style={{ color: 'var(--text-primary)' }}>{val}</p>
+              <p className="text-xs" style={{ color: 'var(--text-soft)' }}>{label}</p>
             </div>
           ))}
         </div>
-        {/* Visit history */}
-        <div className="rounded-2xl p-4 bg-white" style={{ border: '1.5px solid #E8E8F8' }}>
-          <p className="font-bold text-waygo-text mb-3">Recent Visits</p>
-          {friend.visitHistory.map((v, i) => (
-            <div key={i} className="flex items-center gap-3 py-2 border-b last:border-0" style={{ borderColor: '#F0EEF8' }}>
-              <span className="text-xl">🏛️</span>
-              <div className="flex-1"><p className="text-sm font-medium text-waygo-text">{v.placeName}</p><p className="text-xs text-waygo-textSoft">{new Date(v.date).toLocaleDateString()}</p></div>
-              {v.pointsEarned > 0 && <span className="text-xs font-bold" style={{ color: '#00A090' }}>+{v.pointsEarned}</span>}
-            </div>
-          ))}
-        </div>
-        {/* Badges */}
-        <div className="rounded-2xl p-4 bg-white" style={{ border: '1.5px solid #E8E8F8' }}>
-          <p className="font-bold text-waygo-text mb-3">Badges</p>
-          <div className="flex gap-3">
-            {friend.badges.map(bid => {
-              const b = BADGES.find(b => b.id === bid);
-              return b ? <div key={bid} className="text-3xl">{b.icon}</div> : null;
-            })}
+        <button onClick={onChat}
+          className="w-full py-3 rounded-xl text-white font-bold flex items-center justify-center gap-2"
+          style={{ background: 'linear-gradient(135deg,#B090FF,#7AC8FF)' }}>
+          <MessageCircle size={18} />
+          Chat
+        </button>
+      </div>
+    </SlidePanel>
+  );
+}
+
+interface FriendDisplay {
+  id: string;
+  name: string;
+  color: string;
+  level: number;
+  points: number;
+  checkins: number;
+  avatar: string;
+}
+
+const EMOJIS = ['😀','😂','❤️','🔥','👍','🎉','😍','🙏','💪','✨','🥰','😎','🤩','👋','💯'];
+
+function formatChatTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  if (diff < 60000) return 'Just now';
+  const hours = d.getHours().toString().padStart(2, '0');
+  const mins = d.getMinutes().toString().padStart(2, '0');
+  if (diff < 86400000) return `${hours}:${mins}`;
+  return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')} ${hours}:${mins}`;
+}
+
+function ChatPanel({ friend, onClose }: { friend: FriendDisplay; onClose: () => void }) {
+  const { user, sendMessage, getMessages } = useAuth();
+  const { t } = useApp();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [showCanvas, setShowCanvas] = useState(false);
+  const [friendOnline, setFriendOnline] = useState(false);
+  const [typing, setTypingState] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    getMessages(friend.id).then(setMessages);
+    const convId = conversationId(user.id, friend.id);
+    const channelKey = `${user.id}-${friend.id}`;
+    const sub = subscribeToMessages(user.id, (msg: any) => {
+      if (msg.sender_id === friend.id || msg.receiver_id === friend.id) {
+        setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
+        markMessagesRead(user.id, friend.id);
+      }
+    }, channelKey);
+
+    const typingSub = subscribeToTyping(convId, user.id, (isTyping) => {
+      setTypingState(isTyping);
+    });
+
+    markMessagesRead(user.id, friend.id);
+    return () => { sub.unsubscribe(); typingSub.unsubscribe(); };
+  }, [user, friend.id]);
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [messages]);
+
+  // Online status polling
+  useEffect(() => {
+    if (!user) return;
+    const check = async () => {
+      try {
+        const { getProfileById } = await import('../lib/db/profiles');
+        const p = await getProfileById(friend.id);
+        if (p?.last_seen_at) {
+          const diff = Date.now() - new Date(p.last_seen_at).getTime();
+          setFriendOnline(diff < 5 * 60 * 1000);
+        }
+      } catch { /* ignore */ }
+    };
+    check();
+    const interval = setInterval(check, 30000);
+    return () => clearInterval(interval);
+  }, [user, friend.id]);
+
+  const handleTyping = () => {
+    if (!user) return;
+    const convId = conversationId(user.id, friend.id);
+    setTyping(convId, user.id, true);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      setTyping(convId, user.id, false);
+    }, 2000);
+  };
+
+  const handleSend = async () => {
+    const content = text.trim();
+    if (!content || !user || sending) return;
+    setSending(true);
+    const convId = conversationId(user.id, friend.id);
+    try {
+      await sendMessage(friend.id, content);
+      setMessages(prev => [...prev, {
+        id: `temp-${Date.now()}`,
+        sender_id: user.id,
+        receiver_id: friend.id,
+        conversation_id: convId,
+        content,
+        type: 'text',
+        image_data: null,
+        is_read: false,
+        created_at: new Date().toISOString(),
+      }]);
+      setText('');
+      setTyping(convId, user.id, false);
+    } catch (err) {
+      console.error('sendMessage failed:', err);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // ── Canvas drawing handlers ──
+  const [lineColor, setLineColor] = useState('#B090FF');
+  const [lineWidth, setLineWidth] = useState(3);
+
+  const resizeCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * window.devicePixelRatio;
+    canvas.height = rect.height * window.devicePixelRatio;
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  }, []);
+
+  useEffect(() => {
+    if (!showCanvas) return;
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    return () => window.removeEventListener('resize', resizeCanvas);
+  }, [showCanvas, resizeCanvas]);
+
+  const getCanvasPos = (e: React.MouseEvent | React.TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  };
+
+  const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const { x, y } = getCanvasPos(e);
+    setIsDrawing(true);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+
+  const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    if (!isDrawing) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const { x, y } = getCanvasPos(e);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => setIsDrawing(false);
+
+  const clearCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }, []);
+
+  const sendDrawing = async () => {
+    const canvas = canvasRef.current;
+    if (!canvas || !user || sending) return;
+    const dataUrl = canvas.toDataURL('image/png');
+    setSending(true);
+    try {
+      await sendMessage(friend.id, dataUrl, { type: 'image', imageData: dataUrl });
+      setMessages(prev => [...prev, {
+        id: `temp-${Date.now()}`,
+        sender_id: user.id,
+        receiver_id: friend.id,
+        conversation_id: conversationId(user.id, friend.id),
+        content: dataUrl,
+        type: 'image',
+        image_data: dataUrl,
+        is_read: false,
+        created_at: new Date().toISOString(),
+      }]);
+      setShowCanvas(false);
+    } catch (err) {
+      console.error('sendDrawing failed:', err);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const COLORS = ['#000000', '#FF4444', '#4488FF', '#44CC44', '#B090FF', '#FFFFFF'];
+
+  return (
+    <SlidePanel onClose={onClose}>
+      <PanelHeader title={`${friend.name}`} onClose={onClose} />
+      <div className="flex items-center gap-1.5 px-4 pb-2 -mt-2">
+        <span className={`inline-block w-2 h-2 rounded-full ${friendOnline ? 'bg-green-400' : 'bg-gray-300'}`} />
+        <span className="text-xs" style={{ color: 'var(--text-soft)' }}>{friendOnline ? 'Active' : 'Offline'}</span>
+      </div>
+      <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-3" style={{ minHeight: 0 }}>
+        {messages.length === 0 && (
+          <div className="text-center py-8">
+            <MessageCircle size={40} className="mx-auto mb-2" style={{ color: 'var(--text-soft)' }} />
+            <p className="text-sm" style={{ color: 'var(--text-soft)' }}>{t.noMessages}</p>
           </div>
+        )}
+        {messages.map(msg => {
+          const isMe = msg.sender_id === user?.id;
+          const isImage = msg.type === 'image' || msg.content.startsWith('data:image/');
+          return (
+            <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+              <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm ${isMe ? 'text-white' : ''}`}
+                style={{
+                  background: isMe ? 'linear-gradient(135deg,#B090FF,#7AC8FF)' : 'var(--bg-chip)',
+                  color: isMe ? 'white' : 'var(--text-primary)',
+                  borderBottomRightRadius: isMe ? 4 : 16,
+                  borderBottomLeftRadius: isMe ? 16 : 4,
+                }}>
+                {isImage ? (
+                  <img src={msg.content} alt="Drawing" className="max-w-full rounded-lg" />
+                ) : (
+                  msg.content
+                )}
+              </div>
+              {msg.created_at && (
+                <span className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--text-soft)' }}>
+                  {formatChatTime(msg.created_at)}
+                </span>
+              )}
+            </div>
+          );
+        })}
+        {typing && (
+          <div className="flex items-start">
+            <div className="px-4 py-3 rounded-2xl rounded-bl-sm text-sm" style={{ background: 'var(--bg-chip)' }}>
+              <div className="flex gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Canvas drawing overlay (full-screen) ── */}
+      {showCanvas && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex flex-col"
+          style={{ background: '#1a1a2e' }}
+        >
+          {/* Toolbar */}
+          <div className="flex items-center gap-2 p-3 bg-white/10">
+            <button onClick={() => setShowCanvas(false)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 text-white">
+              <X size={18} />
+            </button>
+            <div className="flex-1" />
+            <div className="flex items-center gap-1.5">
+              {COLORS.map(c => (
+                <button key={c} onClick={() => setLineColor(c)}
+                  className={`w-7 h-7 rounded-full border-2 ${c === '#FFFFFF' ? 'border-gray-400' : 'border-white/30'}`}
+                  style={{
+                    background: c,
+                    boxShadow: lineColor === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : 'none',
+                  }} />
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 ml-2">
+              <span className="text-[10px] text-white/60">1</span>
+              <input type="range" min={1} max={12} value={lineWidth}
+                onChange={e => setLineWidth(Number(e.target.value))}
+                className="w-16 h-1 accent-purple-400" />
+              <span className="text-[10px] text-white/60">12</span>
+            </div>
+            <button onClick={clearCanvas}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/10 text-white/80">
+              Clear
+            </button>
+            <button onClick={sendDrawing} disabled={sending}
+              className="px-4 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-40"
+              style={{ background: 'linear-gradient(135deg,#B090FF,#7AC8FF)' }}>
+              <Send size={12} className="inline mr-1" /> Send
+            </button>
+          </div>
+
+          {/* Canvas area */}
+          <div className="flex-1 relative m-3 rounded-2xl overflow-hidden bg-white">
+            <canvas ref={canvasRef}
+              className="absolute inset-0 w-full h-full touch-none"
+              style={{ cursor: 'crosshair' }}
+              onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseLeave={stopDrawing}
+              onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing} />
+          </div>
+        </motion.div>
+      )}
+
+      {/* ── Emoji picker ── */}
+      {showEmoji && (
+        <div className="px-4 pb-2">
+          <div className="flex flex-wrap gap-1 p-2 rounded-xl" style={{ background: 'var(--bg-chip)' }}>
+            {EMOJIS.map(emoji => (
+              <button key={emoji} onClick={() => setText(prev => prev + emoji)}
+                className="w-8 h-8 flex items-center justify-center text-lg hover:scale-125 transition-transform">
+                {emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Input area ── */}
+      <div className="p-4 border-t" style={{ borderColor: 'var(--border)' }}>
+        <div className="flex gap-2">
+          <button onClick={() => { setShowCanvas(!showCanvas); setShowEmoji(false); }}
+            className="w-10 h-12 rounded-xl flex items-center justify-center"
+            style={{ background: 'var(--bg-chip)' }}>
+            <PenTool size={18} style={{ color: 'var(--text-soft)' }} />
+          </button>
+          <button onClick={() => { setShowEmoji(!showEmoji); setShowCanvas(false); }}
+            className="w-10 h-12 rounded-xl flex items-center justify-center"
+            style={{ background: 'var(--bg-chip)' }}>
+            <Smile size={18} style={{ color: 'var(--text-soft)' }} />
+          </button>
+          <input type="text" value={text} onChange={e => { setText(e.target.value); handleTyping(); }}
+            placeholder={t.typeMessage}
+            onKeyDown={e => e.key === 'Enter' && handleSend()}
+            className="flex-1 px-4 py-3 rounded-xl text-sm outline-none"
+            style={{ background: 'var(--bg-input)', border: '1.5px solid var(--border)', color: 'var(--text-primary)' }} />
+          <button onClick={handleSend} disabled={!text.trim() || sending}
+            className="w-12 h-12 rounded-xl flex items-center justify-center disabled:opacity-40"
+            style={{ background: 'linear-gradient(135deg,#B090FF,#7AC8FF)' }}>
+            <Send size={18} className="text-white" />
+          </button>
         </div>
       </div>
     </SlidePanel>
   );
 }
 
-// ── FRIENDS PANEL ─────────────────────────────────────────────────────────────
 function FriendsPanel({ onClose }: { onClose: () => void }) {
   const { user, acceptFriendRequest, declineFriendRequest } = useAuth();
-  const [selectedFriend, setSelectedFriend] = useState<typeof DEMO_FRIENDS[0] | null>(null);
-  const [requests, setRequests] = useState<FriendRequest[]>(() => {
-    const real = user?.friendRequests?.filter(r => r.status === 'pending') ?? [];
-    return real.length > 0 ? real : DEMO_INCOMING_REQUESTS;
+  const [selectedFriend, setSelectedFriend] = useState<FriendDisplay | null>(null);
+  const [chatWith, setChatWith] = useState<FriendDisplay | null>(null);
+
+  const { data: friendsList = [] } = useQuery({
+    queryKey: ['friends', user?.id],
+    queryFn: async () => {
+      const data = await getFriends(user!.id);
+      return data.map(f => {
+        const isCurrentUserFriendId = f.friend_id === user!.id;
+        const profile = isCurrentUserFriendId ? f.user_profile! : f.friend!;
+        return {
+          id: profile.id,
+          name: profile.full_name,
+          color: stringToColor(profile.full_name),
+          level: profile.current_level,
+          points: profile.points,
+          checkins: profile.checkins_total,
+          avatar: profile.profile_image_url ?? '',
+        };
+      });
+    },
+    enabled: !!user,
+    staleTime: 1000 * 30,
   });
 
+  const requests: FriendRequest[] = user?.friendRequests?.filter(r => r.status === 'pending') ?? [];
+
   if (!user) return null;
-  const myFriendIds = user.friends;
-  const myFriends = DEMO_FRIENDS.filter(f => myFriendIds.includes(f.id));
 
   return (
     <>
       <SlidePanel onClose={onClose}>
         <PanelHeader title="Friends" onClose={onClose} />
         <div className="p-4 pb-10 space-y-4">
-          {/* Incoming requests */}
           {requests.length > 0 && (
             <div>
               <p className="text-xs font-bold text-waygo-textSoft uppercase tracking-wider mb-2">Friend Requests ({requests.length})</p>
@@ -383,12 +732,11 @@ function FriendsPanel({ onClose }: { onClose: () => void }) {
                       <p className="text-xs text-waygo-textSoft">Wants to be your friend</p>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => { acceptFriendRequest(req.id); setRequests(r => r.filter(x => x.id !== req.id)); }}
-                        className="w-9 h-9 rounded-full flex items-center justify-center"
+                      <button onClick={() => { acceptFriendRequest(req.id); }} className="w-9 h-9 rounded-full flex items-center justify-center"
                         style={{ background: '#E8FFF5', border: '1.5px solid #78E8C8' }}>
                         <Check size={16} style={{ color: '#00A090' }} />
                       </button>
-                      <button onClick={() => { declineFriendRequest(req.id); setRequests(r => r.filter(x => x.id !== req.id)); }}
+                      <button onClick={() => { declineFriendRequest(req.id); }}
                         className="w-9 h-9 rounded-full flex items-center justify-center"
                         style={{ background: '#FFF0F3', border: '1.5px solid #FFD0DC' }}>
                         <X size={16} style={{ color: '#FF6080' }} />
@@ -399,18 +747,16 @@ function FriendsPanel({ onClose }: { onClose: () => void }) {
               </div>
             </div>
           )}
-
-          {/* My friends */}
           <div>
-            <p className="text-xs font-bold text-waygo-textSoft uppercase tracking-wider mb-2">My Friends ({myFriends.length})</p>
-            {myFriends.length === 0 && (
+            <p className="text-xs font-bold text-waygo-textSoft uppercase tracking-wider mb-2">My Friends ({friendsList.length})</p>
+            {friendsList.length === 0 && (
               <div className="text-center py-8">
                 <p className="text-3xl mb-2">👥</p>
                 <p className="text-waygo-textSoft text-sm">No friends yet. Add some from the map!</p>
               </div>
             )}
             <div className="space-y-2">
-              {myFriends.map(friend => (
+              {friendsList.map(friend => (
                 <motion.button key={friend.id} whileTap={{ scale: 0.98 }} onClick={() => setSelectedFriend(friend)}
                   className="w-full flex items-center gap-3 p-3 rounded-2xl bg-white"
                   style={{ border: '1.5px solid #E8E8F8' }}>
@@ -430,14 +776,15 @@ function FriendsPanel({ onClose }: { onClose: () => void }) {
         </div>
       </SlidePanel>
       <AnimatePresence>
-        {selectedFriend && <FriendProfile friend={selectedFriend} onClose={() => setSelectedFriend(null)} />}
+        {selectedFriend && <FriendProfile friend={selectedFriend} onClose={() => setSelectedFriend(null)} onChat={() => { setChatWith(selectedFriend); setSelectedFriend(null); }} />}
+        {chatWith && <ChatPanel friend={chatWith} onClose={() => setChatWith(null)} />}
       </AnimatePresence>
     </>
   );
 }
 
-// ── AVATAR PICKER ─────────────────────────────────────────────────────────────
 function AvatarPickerModal({ currentAvatar, onClose, onSelect }: { currentAvatar: string; onClose: () => void; onSelect: (src: string) => void }) {
+  const { t } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState(currentAvatar);
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -450,7 +797,7 @@ function AvatarPickerModal({ currentAvatar, onClose, onSelect }: { currentAvatar
     <BottomModal onClose={onClose} tall>
       <div className="p-6 pb-10">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-black text-waygo-text">Choose Avatar</h2>
+          <h2 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>{t.chooseAvatar}</h2>
           <button onClick={onClose} className="p-2 rounded-full" style={{ background: '#EAEAF8' }}><X size={18} style={{ color: '#9090C0' }} /></button>
         </div>
         <p className="text-xs font-semibold text-waygo-textSoft mb-3 uppercase tracking-wider">Explorer Parrots</p>
@@ -483,11 +830,9 @@ function AvatarPickerModal({ currentAvatar, onClose, onSelect }: { currentAvatar
   );
 }
 
-// ── SETTINGS ──────────────────────────────────────────────────────────────────
-
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const { user, logout, updateUser } = useAuth();
-  const { darkMode, setDarkMode, language, setLanguage } = useApp();
+  const { t, darkMode, setDarkMode, language, setLanguage } = useApp();
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [newEmail, setNewEmail] = useState(user?.email || '');
   const [emailSaved, setEmailSaved] = useState(false);
@@ -502,20 +847,20 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   ];
 
   const items = [
-    { id: 'points',   emoji: '⭐', label: 'My Points',        sub: `${user.points} pts available` },
-    { id: 'rewards',  emoji: '🎁', label: 'Redeemed Rewards',  sub: `${user.redeemedRewards.length} total` },
-    { id: 'history',  emoji: '📍', label: 'Visit History',     sub: `${user.visitHistory.length} places visited` },
-    { id: 'email',    emoji: '✉️', label: 'Change Email',      sub: user.email },
-    { id: 'language', emoji: '🌐', label: 'Language',          sub: LANGUAGES_LIST.find(l => l.code === language)?.label || 'English' },
-    { id: 'darkmode', emoji: darkMode ? '☀️' : '🌙', label: darkMode ? 'Light Mode' : 'Dark Mode', sub: darkMode ? 'Currently dark' : 'Currently light', toggle: true },
-    { id: 'logout',   emoji: '🚪', label: 'Logout',            sub: '', danger: true },
+    { id: 'points',   emoji: '⭐', label: t.myPoints,        sub: `${user.points} ${t.pointsAvailable}` },
+    { id: 'rewards',  emoji: '🎁', label: t.redeemedRewards,  sub: `${user.redeemedRewards.length} total` },
+    { id: 'history',  emoji: '📍', label: t.visitHistory,     sub: `${user.visitHistory.length} places visited` },
+    { id: 'email',    emoji: '✉️', label: t.changeEmail,      sub: user.email },
+    { id: 'language', emoji: '🌐', label: t.language,          sub: LANGUAGES_LIST.find(l => l.code === language)?.label || 'English' },
+    { id: 'darkmode', emoji: darkMode ? '☀️' : '🌙', label: darkMode ? t.lightMode : t.darkMode, sub: darkMode ? t.currentlyDark : t.currentlyLight, toggle: true },
+    { id: 'logout',   emoji: '🚪', label: t.logout,            sub: '', danger: true },
   ];
 
   return (
     <BottomModal onClose={onClose} tall>
       <div className="p-6 pb-10">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-xl font-black text-waygo-text flex items-center gap-2">⚙️ Settings</h2>
+          <h2 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>⚙️ {t.settings}</h2>
           <button onClick={onClose} className="p-2 rounded-full" style={{ background: '#EAEAF8' }}><X size={18} style={{ color: '#9090C0' }} /></button>
         </div>
         <div className="space-y-2">
@@ -606,16 +951,24 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 }
 
 function AddFriendModal({ onClose }: { onClose: () => void }) {
-  const { addFriend } = useAuth();
+  const { user, addFriend } = useAuth();
   const [username, setUsername] = useState('');
   const [searched, setSearched] = useState(false);
+  const [results, setResults] = useState<{ id: string; name: string; level: number; color: string; }[]>([]);
   const [added, setAdded] = useState<string[]>([]);
-  const demoUsers = [
-    { id: 'u1', name: 'Maria S.',  level: 8, color: '#FF90B5' },
-    { id: 'u2', name: 'Petar K.', level: 7, color: '#B090FF' },
-    { id: 'u3', name: 'Elena V.', level: 6, color: '#7AC8FF' },
-  ];
-  const results = searched ? demoUsers.filter(u => u.name.toLowerCase().includes(username.toLowerCase())) : [];
+
+  const doSearch = async () => {
+    if (!user) return;
+    setSearched(true);
+    const data = await searchProfiles(username, user.id);
+    setResults(data.map(p => ({
+      id: p.id,
+      name: p.full_name ?? 'Unknown',
+      level: p.current_level,
+      color: stringToColor(p.full_name ?? 'Unknown'),
+    })));
+  };
+
   return (
     <BottomModal onClose={onClose}>
       <div className="p-6 pb-10">
@@ -626,7 +979,7 @@ function AddFriendModal({ onClose }: { onClose: () => void }) {
         <div className="flex gap-2 mb-4">
           <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="Search by name…"
             className="flex-1 py-3 px-4 rounded-xl outline-none" style={{ background: '#F5F5FF', border: '1.5px solid #E0E0F5', color: '#1A1A3E' }} />
-          <button onClick={() => setSearched(true)} className="px-4 rounded-xl text-white font-bold" style={{ background: rainbowGrad }}>Search</button>
+          <button onClick={doSearch} className="px-4 rounded-xl text-white font-bold" style={{ background: rainbowGrad }}>Search</button>
         </div>
         <div className="space-y-2">
           {results.map(u => (
@@ -647,14 +1000,21 @@ function AddFriendModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── MAIN PROFILE PAGE ─────────────────────────────────────────────────────────
 type Panel = 'settings' | 'avatar' | 'addFriend' | 'badges' | 'checkins' | 'points' | 'friends' | null;
 
 export function ProfilePage() {
   const { user, updateUser } = useAuth();
   const [panel, setPanel] = useState<Panel>(null);
+  const [earnedBadges, setEarnedBadges] = useState<string[]>([]);
+  const { checkinDates, isLoading: streakLoading } = useStreak();
   const open = (p: Panel) => setPanel(p);
   const close = () => setPanel(null);
+
+  useEffect(() => {
+    if (user) {
+      getUserBadges(user.id).then(data => setEarnedBadges(data.map(b => b.badge_id)));
+    }
+  }, [user]);
 
   if (!user) return null;
 
@@ -662,20 +1022,19 @@ export function ProfilePage() {
     { label: 'Check-ins', value: user.checkins_total, icon: '📍', panel: 'checkins' as Panel },
     { label: 'Points',    value: user.points,          icon: '⭐', panel: 'points'   as Panel },
     { label: 'Friends',   value: user.friends.length,  icon: '👥', panel: 'friends'  as Panel },
-    { label: 'Badges',    value: user.badges.length,   icon: '🏆', panel: 'badges'   as Panel },
+    { label: 'Badges',    value: earnedBadges.length,   icon: '🏆', panel: 'badges'   as Panel },
   ];
 
   return (
     <div className="min-h-screen pb-28 pt-safe" style={{ background: 'var(--rainbow-bg)' }}>
       <div className="p-4 space-y-5 relative z-10">
-        {/* Header */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="relative cursor-pointer" onClick={() => open('avatar')}>
               <div className="w-16 h-16 rounded-full overflow-hidden p-0.5"
                 style={{ background: rainbowGrad }}>
                 <div className="w-full h-full rounded-full overflow-hidden bg-white flex items-center justify-center">
-                  <img src={user.avatar} alt="avatar" className="w-full h-full object-cover" />
+                  <img src={user.profile_image_url ?? user.avatar} alt="avatar" className="w-full h-full object-cover" />
                 </div>
               </div>
               <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center border-2 border-white" style={{ background: rainbowGrad }}>
@@ -683,8 +1042,8 @@ export function ProfilePage() {
               </div>
             </div>
             <div>
-              <h1 className="text-xl font-black text-waygo-text">{user.name}</h1>
-              <p className="text-sm text-waygo-textSoft">Level {user.level} Explorer ✨</p>
+              <h1 className="text-xl font-black text-waygo-text">{user.full_name ?? user.name}</h1>
+              <p className="text-sm text-waygo-textSoft">Level {user.current_level ?? user.level} Explorer ✨</p>
             </div>
           </div>
           <div className="flex gap-2">
@@ -697,9 +1056,8 @@ export function ProfilePage() {
           </div>
         </motion.div>
 
-        <XPBar currentXP={user.xp_total} level={user.level} />
+        <XPBar currentXP={user.xp_total} level={user.current_level ?? user.level} />
 
-        {/* Clickable stat cards */}
         <div className="grid grid-cols-4 gap-3">
           {stats.map((stat, i) => (
             <motion.button key={stat.label} whileTap={{ scale: 0.93 }} onClick={() => open(stat.panel)}
@@ -724,22 +1082,21 @@ export function ProfilePage() {
           </div>
         )}
 
-        <StreakCard currentStreak={user.streak_current} longestStreak={user.streak_longest} recentDays={[1,2,3,4,5,6,7]} />
+        <StreakCard currentStreak={user.streak_current} longestStreak={user.streak_longest} checkinDates={checkinDates} isLoading={streakLoading} />
 
         <div className="rounded-2xl p-4 bg-white" style={{ border: '1.5px solid #E8E8F8' }}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-bold text-waygo-text">Plovdiv Explored</h2>
             <div className="flex items-center gap-1" style={{ color: '#B090FF' }}>
-              <MapPin size={15} /><span className="text-sm font-bold">{user.explored_percentage}%</span>
+              <MapPin size={15} /><span className="text-sm font-bold">{user.explored_pct ?? user.explored_percentage}%</span>
             </div>
           </div>
           <div className="h-3 rounded-full overflow-hidden" style={{ background: '#EAEAF8' }}>
-            <motion.div initial={{ width: 0 }} animate={{ width: `${user.explored_percentage}%` }} transition={{ delay: 0.5, duration: 0.8 }}
+            <motion.div initial={{ width: 0 }} animate={{ width: `${user.explored_pct ?? user.explored_percentage}%` }} transition={{ delay: 0.5, duration: 0.8 }}
               className="h-full rounded-full" style={{ background: rainbowGrad }} />
           </div>
         </div>
 
-        {/* Badges section — clickable grid */}
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-bold text-waygo-text">Badges</h2>
@@ -747,7 +1104,7 @@ export function ProfilePage() {
           </div>
           <div className="grid grid-cols-4 gap-2">
             {BADGES.slice(0, 8).map(badge => {
-              const earned = user.badges.includes(badge.id);
+              const earned = earnedBadges.includes(badge.id);
               return (
                 <motion.button key={badge.id} whileTap={{ scale: 0.9 }} onClick={() => setPanel('badges')}
                   className="flex flex-col items-center gap-1 p-2 rounded-xl"
@@ -782,7 +1139,7 @@ export function ProfilePage() {
       </div>
 
       <AnimatePresence mode="wait">
-        {panel === 'avatar'     && <AvatarPickerModal key="avatar"    currentAvatar={user.avatar} onClose={close} onSelect={src => updateUser({ avatar: src })} />}
+        {panel === 'avatar'     && <AvatarPickerModal key="avatar"    currentAvatar={user.avatar} onClose={close} onSelect={src => updateUser({ profile_image_url: src as any })} />}
         {panel === 'settings'   && <SettingsModal     key="settings"  onClose={close} />}
         {panel === 'addFriend'  && <AddFriendModal    key="addFriend" onClose={close} />}
         {panel === 'badges'     && <BadgesPanel       key="badges"    onClose={close} />}

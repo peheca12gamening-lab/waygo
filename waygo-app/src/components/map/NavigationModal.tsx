@@ -38,7 +38,7 @@ export function NavigationModal({ business, onClose, onCheckedIn }: NavigationMo
   const streamRef = useRef<MediaStream | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
-  const isSight = SIGHT_CATEGORIES.includes(business.category);
+  const isSight = SIGHT_CATEGORIES.includes(business.category ?? '');
   const pointsEarned = isSight ? 50 : 0;
 
   useEffect(() => {
@@ -46,7 +46,7 @@ export function NavigationModal({ business, onClose, onCheckedIn }: NavigationMo
     watchIdRef.current = navigator.geolocation.watchPosition(
       ({ coords: { latitude: lat, longitude: lng } }) => {
         setDistance(haversine(lat, lng, business.lat, business.lng));
-        if (haversine(lat, lng, business.lat, business.lng) < 200 && stage === 'navigating') setStage('arrived');
+        if (haversine(lat, lng, business.lat, business.lng) < 50 && stage === 'navigating') setStage('arrived');
       },
       () => setDistance(80),
       { enableHighAccuracy: true, maximumAge: 3000 }
@@ -54,11 +54,7 @@ export function NavigationModal({ business, onClose, onCheckedIn }: NavigationMo
     return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
   }, [business, stage]);
 
-  useEffect(() => {
-    if (stage !== 'navigating') return;
-    const t2 = setTimeout(() => setStage('arrived'), 4000);
-    return () => clearTimeout(t2);
-  }, [stage]);
+  // No more fake timer — arrival is purely GPS-based (50m threshold)
 
   const startCamera = useCallback(async () => {
     setCameraError('');
@@ -98,7 +94,7 @@ export function NavigationModal({ business, onClose, onCheckedIn }: NavigationMo
 
   const handleConfirmAndUpload = (shouldUpload: boolean) => {
     const id = addVisit({
-      placeId: business.id, placeName: business.name, placeCategory: business.category,
+      placeId: business.id, placeName: business.name, placeCategory: business.category ?? 'cultural',
       date: new Date().toISOString(), pointsEarned: shouldUpload ? pointsEarned : 0,
       photoUrl: photo || undefined,
     });

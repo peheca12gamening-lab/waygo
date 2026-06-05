@@ -1,10 +1,12 @@
 export { MapPage } from './MapPage';
 export { QuestsPage } from './QuestsPage';
-export { CheckinPage } from './CheckinPage';
 export { ForYouPage } from './ForYouPage';
 export { ProfilePage } from './ProfilePage';
 export { LeaderboardPage } from './LeaderboardPage';
+export { LandmarksPage } from './LandmarksPage';
 export { VouchersPage } from './VouchersPage';
 export { PartnerDashboard } from './PartnerDashboard';
-export { AdminPanel } from './AdminPanel';export { RegisterPage } from './RegisterPage';
+export { BusinessRegister } from './BusinessRegister';
+export { AdminPanel } from './AdminPanel';
 export { LoginPage } from './LoginPage';
+export { RegisterPage } from './RegisterPage';

@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useApp } from '../context/AppContext';
 
 interface LoginPageProps { onSwitchToRegister: () => void; }
 
 export function LoginPage({ onSwitchToRegister }: LoginPageProps) {
   const { login } = useAuth();
-  
+  const { t } = useApp();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -16,12 +18,12 @@ export function LoginPage({ onSwitchToRegister }: LoginPageProps) {
 
   const handleSubmit = async () => {
     setError('');
-    if (!email.trim()) return setError('Please enter your email.');
-    if (!password) return setError('Please enter your password.');
+    if (!email.trim()) return setError(t.emailRequired);
+    if (!password) return setError(t.passwordRequired);
     setIsLoading(true);
     const result = await login(email.trim(), password);
     setIsLoading(false);
-    if (!result.success) setError(result.error || 'Login failed.');
+    if (!result.success) setError(result.error || t.loginFailed);
   };
 
   const inputStyle = {
@@ -36,7 +38,7 @@ export function LoginPage({ onSwitchToRegister }: LoginPageProps) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'linear-gradient(160deg, #FFF5F8 0%, #F8F5FF 40%, #F0F8FF 70%, #F0FFF8 100%)' }}>
+    <div className="min-h-screen flex flex-col" style={{ background: 'var(--rainbow-bg)' }}>
       <div className="absolute top-0 left-0 w-64 h-64 rounded-full opacity-30 pointer-events-none"
         style={{ background: 'radial-gradient(circle, #FFB0C8, transparent 70%)', transform: 'translate(-30%, -30%)' }} />
       <div className="absolute bottom-10 right-0 w-56 h-56 rounded-full opacity-25 pointer-events-none"
@@ -54,19 +56,19 @@ export function LoginPage({ onSwitchToRegister }: LoginPageProps) {
             <h1 className="text-3xl font-black" style={{ background: 'linear-gradient(135deg, #FF90B5, #B090FF, #7AC8FF)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
               WayGo
             </h1>
-            <p className="text-waygo-textSoft text-sm mt-1">Explore Plovdiv. Earn rewards.</p>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-soft)' }}>{t.registerSubtitle}</p>
           </div>
 
-          <h2 className="text-xl font-bold text-waygo-text mb-6 text-center">Welcome back 👋</h2>
+          <h2 className="text-xl font-bold mb-6 text-center" style={{ color: 'var(--text-primary)' }}>{t.loginTitle} 👋</h2>
 
-          <div className="space-y-3">
+          <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} autoComplete="off">
             <div className="relative">
               <Mail size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: '#B090FF' }} />
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email address" style={inputStyle} />
+              <input autoComplete="off" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={t.emailPlaceholder} style={inputStyle} />
             </div>
             <div className="relative">
               <Lock size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: '#B090FF' }} />
-              <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
+              <input autoComplete="off" type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={t.passwordPlaceholder}
                 onKeyDown={e => e.key === 'Enter' && handleSubmit()} style={{ ...inputStyle, paddingRight: 44 }} />
               <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2" style={{ color: '#9898C0' }}>
                 {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
@@ -81,21 +83,21 @@ export function LoginPage({ onSwitchToRegister }: LoginPageProps) {
               </motion.p>
             )}
 
-            <motion.button whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={isLoading}
+            <motion.button whileTap={{ scale: 0.97 }} type="submit" disabled={isLoading}
               className="w-full py-4 rounded-2xl text-white font-bold flex items-center justify-center gap-2 disabled:opacity-60"
               style={{ background: 'linear-gradient(135deg, #FF90B5, #B090FF, #7AC8FF)', boxShadow: '0 6px 24px rgba(176,144,255,0.4)' }}>
               {isLoading
                 ? <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                : <> Login <ArrowRight size={18} /> </>
+                : <>{t.login} <ArrowRight size={18} /></>
               }
             </motion.button>
-          </div>
+          </form>
 
           <div className="mt-6 text-center">
-            <p className="text-waygo-textSoft text-sm">
-              Don't have an account?{' '}
+            <p className="text-sm" style={{ color: 'var(--text-soft)' }}>
+              {t.noAccount}{' '}
               <button onClick={onSwitchToRegister} className="font-bold underline underline-offset-2" style={{ color: '#B090FF' }}>
-                Create one here
+                {t.createHere}
               </button>
             </p>
           </div>

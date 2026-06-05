@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { motion, useMotionValue, PanInfo } from 'framer-motion';
 import { GripHorizontal } from 'lucide-react';
+import { useApp } from '../../context/AppContext';
 import type { BottomSheetState } from '../../types';
 
 interface BottomSheetProps {
@@ -71,6 +72,9 @@ interface PlaceCardProps {
   isExpanded?: boolean;
   onToggleExpand?: () => void;
   onClose?: () => void;
+  isSight?: boolean;
+  xpReward?: number;
+  imageUrl?: string;
 }
 
 const categoryMeta: Record<string, { emoji: string; color: string; bg: string }> = {
@@ -81,15 +85,25 @@ const categoryMeta: Record<string, { emoji: string; color: string; bg: string }>
   shop:     { emoji: '🛍️', color: '#B090FF', bg: '#F8F0FF' },
 };
 
-export function PlaceCard({ name, category, distance, rating, description, address, checkinCount, onCheckIn, isExpanded = false, onToggleExpand, onClose }: PlaceCardProps) {
+export function PlaceCard({ name, category, distance, rating, description, address, checkinCount, onCheckIn, isExpanded = false, onToggleExpand, onClose, isSight = false, xpReward = 0, imageUrl }: PlaceCardProps) {
+  const { t } = useApp();
   const meta = categoryMeta[category] || { emoji: '📍', color: '#B090FF', bg: '#F8F0FF' };
-  const isSight = category === 'museum' || category === 'cultural';
 
   return (
     <div className="space-y-3">
+      {isExpanded && imageUrl && (
+        <div className="w-full h-40 rounded-2xl overflow-hidden -mx-0">
+          <img src={imageUrl} alt={name} className="w-full h-full object-cover" />
+        </div>
+      )}
       <div className="flex items-start gap-3">
-        <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl" style={{ background: meta.bg }}>
+        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl relative ${isSight ? 'ring-2 ring-amber-400' : ''}`} style={{ background: meta.bg }}>
           {meta.emoji}
+          {isSight ? (
+            <span className="absolute -top-1 -right-1 text-xs">⭐</span>
+          ) : (
+            <span className="absolute -top-1 -right-1 text-xs" style={{ color: '#999', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.1))' }}>🏢</span>
+          )}
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-waygo-text text-base truncate">{name}</h3>
@@ -105,17 +119,25 @@ export function PlaceCard({ name, category, distance, rating, description, addre
 
       {isExpanded && description && (
         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="space-y-2">
-          <p className="text-waygo-textMid text-sm leading-relaxed">{description}</p>
+          <p className="text-waygo-text text-sm leading-relaxed">{description}</p>
           {address && <p className="text-sm text-waygo-textSoft flex items-center gap-1.5">📍 {address}</p>}
           {checkinCount && <p className="text-xs text-waygo-textSoft">{checkinCount} check-ins</p>}
         </motion.div>
       )}
 
-      {/* Points badge for sights */}
-      {isSight && (
+      {/* XP badge for scenic/cultural locations */}
+      {isSight && xpReward > 0 && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold"
-          style={{ background: 'linear-gradient(135deg, #E8FFFA, #E8F4FF)', color: '#00A090', border: '1px solid #C0EEE8' }}>
-          ⭐ Visit to earn 50 points
+          style={{ background: 'linear-gradient(135deg, #FFF8E0, #FFF0D0)', color: '#B8860B', border: '1px solid #E8D08C' }}>
+          ⭐ +{xpReward} XP on visit
+        </div>
+      )}
+
+      {/* Business info for non-sight locations */}
+      {!isSight && (
+        <div className="px-3 py-2 rounded-xl text-xs"
+          style={{ background: '#F5F5F8', color: '#8080A0', border: '1px solid #E0E0EC' }}>
+          XP is earned at scenic and cultural sights. Businesses may offer bonus challenges.
         </div>
       )}
 
@@ -125,14 +147,14 @@ export function PlaceCard({ name, category, distance, rating, description, addre
           className="flex-1 py-3 px-4 rounded-xl font-bold text-white text-sm transition-all active:scale-95"
           style={{ background: 'linear-gradient(135deg, #FF90B5, #B090FF, #7AC8FF)', boxShadow: '0 4px 16px rgba(176, 144, 255, 0.35)' }}
         >
-          🧭 Start Route
+          🧭 {t.startRoute}
         </button>
         <button
           onClick={isExpanded ? (onClose || onToggleExpand) : onToggleExpand}
           className="px-4 py-3 rounded-xl font-semibold text-sm transition-colors"
           style={{ background: '#EAEAF8', color: '#9090C0' }}
         >
-          {isExpanded ? 'Close' : 'More'}
+          {isExpanded ? t.close : t.more}
         </button>
       </div>
     </div>

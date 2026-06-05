@@ -1,51 +1,64 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
+import { fetchRoute, formatDuration as orsFormatDuration, formatDistance as orsFormatDistance } from '../lib/openRouteService';
+import type { RouteResult } from '../lib/openRouteService';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Crosshair } from 'lucide-react';
+import { Crosshair, Navigation } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
-import type { PartnerBusiness, CategoryFilter, ExploredTile } from '../types';
-import { fetchBusinesses } from '../data/mockApi';
-import { DEMO_EXPLORERS } from '../data/seed';
-import { formatDistance } from '../utils/geo';
+import type { Business, CategoryFilter, ExploredTile } from '../types';
+import { getBusinesses, getOnlineUsers, getQuestStopsByBusinessIds } from '../lib/db';
+import { haversine, formatDistance } from '../utils/geo';
 import { SearchBar, CategoryChips, ExploreCarousel, PlaceCard } from '../components/ui';
 import { useFogOfWarCanvas } from '../components/map/FogOfWarOverlay';
 import { NavigationModal } from '../components/map/NavigationModal';
+import { ExplorerProfile } from '../components/map/ExplorerProfile';
+import { useWatchPosition } from '../hooks/useWatchPosition';
 import { useUI } from '../context/UIContext';
 import { useApp } from '../context/AppContext';
+import { useQuest } from '../hooks/useQuest';
 
-// ── White (light) map tiles ──────────────────────────────────────────────────
 const LIGHT_MAP_TILES = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 const DARK_MAP_TILES  = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 const PLOVDIV_CENTER: [number, number] = [42.1354, 24.7453];
 const DEFAULT_ZOOM = 14;
 
-// ── Category config ──────────────────────────────────────────────────────────
-const categoryMeta: Record<string, { emoji: string; color: string }> = {
-  cafe:     { emoji: '☕', color: '#FF90B5' },
-  museum:   { emoji: '🏛️', color: '#7AC8FF' },
-  cultural: { emoji: '🕌', color: '#78E8C8' },
-  bar:      { emoji: '🍺', color: '#FFB878' },
-  shop:     { emoji: '🛍️', color: '#B090FF' },
+const CATEGORY_SVG: Record<string, string> = {
+  cafe: '<svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M2 21v-2h18v2zm1.5-4q-.625 0-1.062-.438T2 15.5V5h18q.825 0 1.413.588T22 7v3q0 .825-.587 1.413T20 12h-2v3.5q0 .625-.437 1.063T16.5 17zm.5-2h11V7H4zM18 12h2V7h-2z"/></svg>',
+  museum: '<svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M12 2L2 7v1h20V7zm-1 4h2v2h-2zm-3 0h2v2H8zm9 0h2v2h-2zM4 10v8H2v2h20v-2h-2v-8h-2v8h-3v-8h-2v8H8v-8H6v8H4v-8z"/></svg>',
+  cultural: '<svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93s3.05-7.44 7-7.93v15.86zm2 0V4.07c3.95.49 7 3.85 7 7.93s-3.05 7.44-7 7.93z"/></svg>',
+  bar: '<svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M7 2l1 6h2L7 2M11 2l1 6h2l-3-6M15 2l1 6h2l-3-6M5 10v10c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V10H5zm12 10H7v-6h10v6z"/></svg>',
+  shop: '<svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M7 18c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM5.07 5l1.34 5H19.6l1.26-5H5.07zM4.16 3h16.68c.75 0 1.24.78.94 1.46l-2.1 7.98c-.15.56-.66.96-1.24.96H6.56c-.58 0-1.09-.4-1.24-.96L2.22 4.46C1.92 3.78 2.41 3 3.16 3z"/></svg>',
 };
 
-function createCustomIcon(category: string, isSelected: boolean, isFeatured: boolean) {
-  const meta = categoryMeta[category] || { emoji: '📍', color: '#B090FF' };
+function createCustomIcon(category: string, isSelected: boolean, isFeatured: boolean, isQuestStop = false, isSight = false) {
+  const colorMeta: Record<string, string> = {
+    cafe: '#FF90B5', museum: '#7AC8FF', cultural: '#78E8C8', bar: '#FFB878', shop: '#B090FF',
+  };
+  const color = colorMeta[category] || '#B090FF';
+  const svg = CATEGORY_SVG[category] || CATEGORY_SVG.shop;
   const size = isSelected ? 46 : 38;
-  const shadow = isSelected ? `0 6px 20px ${meta.color}88` : '0 4px 14px rgba(0,0,0,0.18)';
-  const border = isSelected ? '3px solid white' : '2.5px solid white';
+  const shadow = isSelected ? `0 6px 20px ${color}88` : '0 4px 14px rgba(0,0,0,0.18)';
+  const border = isSelected ? '3px solid white' : isQuestStop ? '2.5px solid #FFD700' : '2.5px solid white';
+  const badge = isFeatured ? `<span style="position:absolute;top:-7px;left:50%;transform:translateX(-50%);font-size:13px;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.2))">⭐</span>` : '';
+  const sightBadge = !isFeatured && isSight ? `<span style="position:absolute;top:-7px;right:-7px;font-size:11px;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.3))">⭐</span>` : '';
+  const bizBadge = !isFeatured && !isSight && !isQuestStop ? `<span style="position:absolute;top:-7px;right:-7px;font-size:10px;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.3))">🏢</span>` : '';
+  const questBadge = isQuestStop ? `<span style="position:absolute;bottom:-2px;right:-2px;font-size:11px;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.3))">⚔️</span>` : '';
   const html = `
-    <div style="width:${size}px;height:${size}px;background:${meta.color};
+    <div style="width:${size}px;height:${size}px;background:${color};
       border:${border};border-radius:50%;display:flex;align-items:center;
-      justify-content:center;font-size:${size*0.42}px;box-shadow:${shadow};position:relative;">
-      ${meta.emoji}
-      ${isFeatured ? `<span style="position:absolute;top:-7px;right:-7px;font-size:13px;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.2))">⭐</span>` : ''}
+      justify-content:center;box-shadow:${shadow};position:relative;">
+      ${svg}
+      ${badge}${sightBadge}${bizBadge}${questBadge}
     </div>`;
   return L.divIcon({ html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size/2, size/2] });
 }
 
-function createUserArrowIcon() {
-  const html = `<div style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 4px 14px rgba(80,100,255,0.5))">
+function createUserArrowIcon(heading?: number) {
+  const rotate = heading !== undefined ? `transform:rotate(${heading}deg)` : '';
+  const html = `<div style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 4px 14px rgba(80,100,255,0.5));${rotate}">
     <img src="/arrow.png" style="width:44px;height:44px;object-fit:contain;" />
   </div>`;
   return L.divIcon({ html, className: 'user-arrow-marker', iconSize: [44, 44], iconAnchor: [22, 22] });
@@ -61,7 +74,6 @@ function createExplorerIcon(name: string, index: number) {
   return L.divIcon({ html, className: 'explorer-marker', iconSize: [30, 30], iconAnchor: [15, 15] });
 }
 
-// ── Map Controller (gives us the map ref for re-centering) ───────────────────
 function MapController({ onReady }: { onReady: (map: L.Map) => void }) {
   const map = useMap();
   useEffect(() => { onReady(map); }, [map, onReady]);
@@ -73,61 +85,111 @@ function MapEvents() {
   return null;
 }
 
-// ── Explorer profile popup ───────────────────────────────────────────────────
-function ExplorerProfile({ explorer, index, onClose }: { explorer: typeof DEMO_EXPLORERS[0]; index: number; onClose: () => void }) {
-  const colors = ['#FF90B5', '#B090FF', '#7AC8FF', '#78E8C8', '#FFB878'];
-  const color = colors[index % colors.length];
-  return (
-    <motion.div initial={{ opacity: 0, scale: 0.9, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 10 }}
-      className="absolute top-32 left-4 right-4 z-40 rounded-2xl p-4"
-      style={{ background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(20px)', border: '1.5px solid #E8E8F8', boxShadow: '0 8px 32px rgba(176,144,255,0.2)' }}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg" style={{ background: color }}>
-            {explorer.name.charAt(0)}
-          </div>
-          <div>
-            <p className="text-waygo-text font-bold">{explorer.name}</p>
-            <p className="text-waygo-textSoft text-xs">Explorer · Active now</p>
-          </div>
-        </div>
-        <button onClick={onClose} className="text-waygo-textSoft text-lg leading-none w-7 h-7 flex items-center justify-center rounded-full"
-          style={{ background: '#EAEAF8' }}>✕</button>
-      </div>
-      <div className="grid grid-cols-3 gap-2 mb-3">
-        {[['12', 'Check-ins'], ['Lv.4', 'Level'], ['🔥5', 'Streak']].map(([val, label]) => (
-          <div key={label} className="rounded-xl p-2 text-center" style={{ background: '#F5F5FF' }}>
-            <p className="font-bold text-base" style={{ color }}>{val}</p>
-            <p className="text-waygo-textSoft text-xs">{label}</p>
-          </div>
-        ))}
-      </div>
-      <button className="w-full py-2 rounded-xl text-sm font-bold"
-        style={{ background: `${color}18`, color, border: `1.5px solid ${color}44` }}>+ Add Friend</button>
-    </motion.div>
-  );
-}
-
-// ── Main map content ─────────────────────────────────────────────────────────
-function MapPageContent({ businesses, onBusinessSelect, selectedBusiness, onCheckIn, tiles, showExplorers, onMapReady }: {
-  businesses: PartnerBusiness[];
-  onBusinessSelect: (b: PartnerBusiness | null) => void;
-  selectedBusiness: PartnerBusiness | null;
-  onCheckIn: (b: PartnerBusiness) => void;
+function MapPageContent({ businesses, onBusinessSelect, selectedBusiness, onCheckIn, tiles, showExplorers, onMapReady, explorers, livePosition, routeTarget, onClearRoute, onStartChat, questBusinessMap }: {
+  businesses: Business[];
+  onBusinessSelect: (b: Business | null) => void;
+  selectedBusiness: Business | null;
+  onCheckIn: (b: Business) => void;
   tiles: ExploredTile[];
   showExplorers: boolean;
   onMapReady: (map: L.Map) => void;
+  explorers: { user_id: string; full_name: string; lat: number; lng: number }[];
+  livePosition: [number, number];
+  routeTarget: Business | null;
+  onClearRoute: () => void;
+  onStartChat?: (userId: string, userName: string) => void;
+  questBusinessMap?: Record<string, { questId: string; questTitle: string }[]>;
 }) {
-  const { darkMode } = useApp();
+  const { activateQuestFromMap, isActive } = useQuest();
+  const [questActivated, setQuestActivated] = useState<string | null>(null);
+  const { darkMode, t } = useApp();
   const [category, setCategory] = useState<CategoryFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedExplorer, setSelectedExplorer] = useState<{ explorer: typeof DEMO_EXPLORERS[0]; index: number } | null>(null);
+  const [selectedExplorer, setSelectedExplorer] = useState<{ explorer: { user_id: string; full_name: string; lat: number; lng: number }; index: number } | null>(null);
   const [mapInst, setMapInst] = useState<L.Map | null>(null);
   const mapRef = useRef<HTMLDivElement>(null);
-  const userPos: [number, number] = [42.1420, 24.7490];
+  const [routeData, setRouteData] = useState<RouteResult | null>(null);
+  const [routePolyline, setRoutePolyline] = useState<L.Polyline | null>(null);
+  const [navError, setNavError] = useState(false);
+  const [pulsingDot, setPulsingDot] = useState<L.CircleMarker | null>(null);
+  const intervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
 
-  // Unused tiles arg kept for FogOfWar hook signature
-  useFogOfWarCanvas(mapRef, mapInst, tiles, false); // fog disabled for light map
+  useFogOfWarCanvas(mapRef, mapInst, tiles, false);
+
+  // Cleanup helper for route layers and intervals
+  const clearRoute = useCallback(() => {
+    if (routePolyline && mapInst) { mapInst.removeLayer(routePolyline); setRoutePolyline(null); }
+    if (pulsingDot && mapInst) { mapInst.removeLayer(pulsingDot); setPulsingDot(null); }
+    intervalsRef.current.forEach(clearInterval);
+    intervalsRef.current = [];
+    setRouteData(null);
+    setNavError(false);
+  }, [routePolyline, pulsingDot, mapInst]);
+
+  // ORS route fetching when routeTarget changes
+  useEffect(() => {
+    clearRoute();
+    if (!routeTarget || !mapInst) return;
+
+    const fetchAndDraw = async (from: [number, number]) => {
+      const result = await fetchRoute(from, [routeTarget.lat, routeTarget.lng]);
+      if (!result) {
+        setNavError(true);
+        const line = L.polyline([from, [routeTarget.lat, routeTarget.lng]], {
+          color: '#808080', weight: 3, opacity: 0.7, dashArray: '10,10',
+        }).addTo(mapInst);
+        setRoutePolyline(line);
+        return;
+      }
+      setNavError(false);
+      setRouteData(result);
+      const line = L.polyline(result.coordinates, {
+        color: '#3B82F6', weight: 5, opacity: 0.85,
+      }).addTo(mapInst);
+      setRoutePolyline(line);
+      mapInst.fitBounds(line.getBounds(), { padding: [60, 60], maxZoom: 16 });
+
+      const dot = L.circleMarker(from, {
+        radius: 8, color: '#3B82F6', fillColor: '#3B82F6', fillOpacity: 1, weight: 3,
+      }).addTo(mapInst);
+      setPulsingDot(dot);
+
+      let grow = true;
+      const pulseInterval = setInterval(() => {
+        const r = dot.getRadius();
+        dot.setRadius(grow ? Math.min(r + 0.5, 12) : Math.max(r - 0.5, 6));
+        if (r >= 12 || r <= 6) grow = !grow;
+      }, 80);
+      intervalsRef.current.push(pulseInterval);
+
+      let lastPos = from;
+      const watchInterval = setInterval(async () => {
+        const dist = haversine(lastPos[0], lastPos[1], livePosition[0], livePosition[1]);
+        if (dist > 50) {
+          lastPos = livePosition;
+          const newResult = await fetchRoute(livePosition, [routeTarget.lat, routeTarget.lng]);
+          if (newResult) {
+            setRouteData(newResult);
+            if (routePolyline) mapInst.removeLayer(routePolyline);
+            const newLine = L.polyline(newResult.coordinates, {
+              color: '#3B82F6', weight: 5, opacity: 0.85,
+            }).addTo(mapInst);
+            setRoutePolyline(newLine);
+            if (pulsingDot) mapInst.removeLayer(pulsingDot);
+            const newDot = L.circleMarker(livePosition, {
+              radius: 8, color: '#3B82F6', fillColor: '#3B82F6', fillOpacity: 1, weight: 3,
+            }).addTo(mapInst);
+            setPulsingDot(newDot);
+          }
+        }
+        mapInst.setView(livePosition, mapInst.getZoom(), { animate: true });
+      }, 5000);
+      intervalsRef.current.push(watchInterval);
+    };
+
+    fetchAndDraw(livePosition);
+    return clearRoute;
+  }, [mapInst, routeTarget]);
 
   const handleMapReady = useCallback((m: L.Map) => {
     setMapInst(m);
@@ -139,32 +201,27 @@ function MapPageContent({ businesses, onBusinessSelect, selectedBusiness, onChec
     if (category !== 'all') {
       result = category === 'featured'
         ? result.filter(b => b.subscription_tier === 'featured')
-        : result.filter(b => b.category === category);
+        : result.filter(b => b.category_slug === category);
     }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(b => b.name.toLowerCase().includes(q) || b.category.toLowerCase().includes(q));
+      result = result.filter(b => b.name.toLowerCase().includes(q) || b.category_slug.toLowerCase().includes(q));
     }
     return result;
   }, [businesses, category, searchQuery]);
 
-  const distanceToBusiness = useCallback((business: PartnerBusiness) => {
-    const R = 6371e3;
-    const lat1 = userPos[0] * Math.PI / 180;
-    const lat2 = business.lat * Math.PI / 180;
-    const dLat = (business.lat - userPos[0]) * Math.PI / 180;
-    const dLng = (business.lng - userPos[1]) * Math.PI / 180;
-    const a = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
-    return formatDistance(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-  }, [userPos]);
+  const liveDistance = useCallback((business: Business) => {
+    const d = haversine(livePosition[0], livePosition[1], business.lat, business.lng);
+    return formatDistance(d);
+  }, [livePosition]);
 
-  const handleMarkerClick = useCallback((business: PartnerBusiness) => {
+  const handleMarkerClick = useCallback((business: Business) => {
     onBusinessSelect(business);
     setSelectedExplorer(null);
     if (mapInst) mapInst.setView([business.lat, business.lng], 16, { animate: true });
   }, [mapInst, onBusinessSelect]);
 
-  const handleBusinessSelect = useCallback((business: PartnerBusiness) => {
+  const handleBusinessSelect = useCallback((business: Business) => {
     onBusinessSelect(business);
     setSelectedExplorer(null);
     if (mapInst) mapInst.setView([business.lat, business.lng], 16);
@@ -172,7 +229,6 @@ function MapPageContent({ businesses, onBusinessSelect, selectedBusiness, onChec
 
   return (
     <div className="relative w-full h-screen">
-      {/* Map + rainbow overlay */}
       <div ref={mapRef} className="absolute inset-0 z-0">
         <MapContainer center={PLOVDIV_CENTER} zoom={DEFAULT_ZOOM}
           style={{ width: '100%', height: '100%' }} zoomControl={false} attributionControl={false}>
@@ -180,30 +236,30 @@ function MapPageContent({ businesses, onBusinessSelect, selectedBusiness, onChec
           <MapController onReady={handleMapReady} />
           <MapEvents />
 
-          {/* User location 3D arrow */}
-          <Marker position={userPos} icon={createUserArrowIcon()} />
+          <Marker position={livePosition} icon={createUserArrowIcon()} />
 
-          {filteredBusinesses.map((business) => (
-            <Marker key={business.id} position={[business.lat, business.lng]}
-              icon={createCustomIcon(business.category, selectedBusiness?.id === business.id, business.subscription_tier === 'featured')}
+          {filteredBusinesses.map((business) => {
+            const questsHere = questBusinessMap?.[business.id];
+            const isQuestStop = !!questsHere && questsHere.length > 0;
+            return <Marker key={business.id} position={[business.lat, business.lng]}
+              icon={createCustomIcon(business.category_slug, selectedBusiness?.id === business.id, business.subscription_tier === 'featured', isQuestStop, business.is_sight)}
               eventHandlers={{ click: () => handleMarkerClick(business) }}>
               <Popup className="waygo-popup">
                 <div className="p-3 min-w-[150px]">
                   <h3 className="font-bold text-sm text-waygo-text">{business.name}</h3>
-                  <p className="text-xs text-waygo-textSoft mt-1">{distanceToBusiness(business)} away</p>
+                  <p className="text-xs text-waygo-textSoft mt-1">{liveDistance(business)} away</p>
                 </div>
               </Popup>
-            </Marker>
-          ))}
+            </Marker>;
+          })}
 
-          {showExplorers && DEMO_EXPLORERS.map((explorer, i) => (
-            <Marker key={explorer.id} position={[explorer.lat, explorer.lng]}
-              icon={createExplorerIcon(explorer.name, i)}
+          {showExplorers && explorers.map((explorer, i) => (
+            <Marker key={explorer.user_id} position={[explorer.lat, explorer.lng]}
+              icon={createExplorerIcon(explorer.full_name, i)}
               eventHandlers={{ click: () => { setSelectedExplorer({ explorer, index: i }); onBusinessSelect(null); } }} />
           ))}
         </MapContainer>
 
-        {/* Rainbow gradient overlay on the map (like the reference image) */}
         <div className="absolute inset-0 pointer-events-none z-10"
           style={{
             background: 'radial-gradient(ellipse 70% 50% at 30% 40%, rgba(255,176,200,0.22) 0%, transparent 60%),' +
@@ -214,54 +270,117 @@ function MapPageContent({ businesses, onBusinessSelect, selectedBusiness, onChec
           }} />
       </div>
 
-      {/* Search bar */}
-      <SearchBar value={searchQuery} onChange={setSearchQuery} placeholder="Search places in Plovdiv..." />
-      {/* Category chips */}
+      <SearchBar value={searchQuery} onChange={setSearchQuery} placeholder={t.searchPlaces} />
       <CategoryChips selected={category} onSelect={setCategory} />
 
-      {/* Explorer profile popup */}
+      {routeTarget && (
+        <>
+          <button onClick={onClearRoute}
+            className="absolute top-20 right-4 z-20 px-4 py-2 rounded-xl text-sm font-bold text-white"
+            style={{ background: 'linear-gradient(135deg,#FF6080,#B090FF)', boxShadow: '0 4px 12px rgba(176,144,255,0.3)' }}>
+            ✕ {t.close}
+          </button>
+
+          {/* Navigation banner */}
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="absolute bottom-8 left-4 right-4 z-30"
+          >
+            <div className="rounded-2xl p-4" style={{
+              background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(24px)',
+              border: '1.5px solid #E8E8F8', boxShadow: '0 8px 32px rgba(59,130,246,0.18)'
+            }}>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <h4 className="font-bold text-sm" style={{ color: '#1a1a2e' }}>{routeTarget.name}</h4>
+                  <div className="flex items-center gap-3 mt-1">
+                    {routeData ? (
+                      <>
+                        <span className="text-xs font-semibold text-blue-500">{orsFormatDistance(routeData.distance)}</span>
+                        <span className="text-xs text-gray-500">{orsFormatDuration(routeData.duration)}</span>
+                      </>
+                    ) : navError ? (
+                      <span className="text-xs text-amber-600">Exact route unavailable — showing direct path</span>
+                    ) : (
+                      <span className="text-xs text-gray-400">Loading route...</span>
+                    )}
+                  </div>
+                </div>
+                <button onClick={onClearRoute}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white"
+                  style={{ background: 'linear-gradient(135deg,#FF6080,#B090FF)' }}>
+                  Stop Navigation
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </>
+      )}
+
       <AnimatePresence>
         {selectedExplorer && (
-          <ExplorerProfile explorer={selectedExplorer.explorer} index={selectedExplorer.index} onClose={() => setSelectedExplorer(null)} />
+          <ExplorerProfile explorer={selectedExplorer.explorer} index={selectedExplorer.index} onClose={() => setSelectedExplorer(null)} onStartChat={onStartChat} />
         )}
       </AnimatePresence>
 
-      {/* Place card popup from bottom */}
       <AnimatePresence>
         {selectedBusiness && (
           <motion.div initial={{ y: 400 }} animate={{ y: 0 }} exit={{ y: 400 }}
             transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            className="absolute bottom-36 left-4 right-4 z-30">
+            className="absolute bottom-28 left-4 right-4 z-30">
             <div className="rounded-2xl p-4"
               style={{ background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(24px)', border: '1.5px solid #E8E8F8', boxShadow: '0 8px 32px rgba(176,144,255,0.18)' }}>
               <PlaceCard
                 name={selectedBusiness.name}
-                category={selectedBusiness.category}
-                distance={distanceToBusiness(selectedBusiness)}
-                description={selectedBusiness.description}
-                address={selectedBusiness.address}
+                category={selectedBusiness.category_slug}
+                distance={liveDistance(selectedBusiness)}
+                description={selectedBusiness.description ?? ''}
+                address=""
                 checkinCount={selectedBusiness.total_checkins}
                 onCheckIn={() => onCheckIn(selectedBusiness)}
                 isExpanded={true}
                 onToggleExpand={() => {}}
                 onClose={() => onBusinessSelect(null)}
+                isSight={selectedBusiness.is_sight}
+                xpReward={selectedBusiness.is_sight ? 50 : 0}
+                imageUrl={selectedBusiness.cover_image_url ?? undefined}
               />
+              {questBusinessMap?.[selectedBusiness.id]?.map((q, qi) => {
+                const active = isActive(q.questId);
+                return (
+                <div key={qi} className="mt-2 px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between"
+                  style={{ background: 'rgba(255,215,0,0.12)', border: '1px solid rgba(255,215,0,0.3)', color: '#B8960F' }}>
+                  <span>⚔️ Quest: {q.questTitle}</span>
+                  {!active && (
+                    <button onClick={() => { activateQuestFromMap(q.questId); setQuestActivated(q.questId); setTimeout(() => setQuestActivated(null), 2500); }}
+                      className="ml-2 px-2 py-1 rounded-lg text-xs font-bold text-white"
+                      style={{ background: 'linear-gradient(135deg,#FF90B5,#B090FF)' }}>
+                      Accept
+                    </button>
+                  )}
+                  {active && <span className="text-xs text-green-600">Active</span>}
+                </div>
+              );})}
+              {questActivated && (
+                <div className="mt-1 text-center text-xs font-semibold text-green-600">
+                  ✓ Quest accepted — check your profile to track progress!
+                </div>
+              )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Explore Nearby carousel + re-centre button above it */}
-      {!selectedBusiness && (
+      {!selectedBusiness && !routeTarget && (
         <>
-          {/* Re-centre button – sits just above the carousel */}
-          <div className="absolute bottom-52 right-4 z-20">
+          <div className="absolute bottom-72 right-4 z-20">
             <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               onClick={() => {
                 if (mapInst) {
-                  mapInst.setView(userPos, 16, { animate: true });
+                  mapInst.flyTo(livePosition, 16, { animate: true });
                 }
               }}
               className="w-12 h-12 rounded-full flex items-center justify-center"
@@ -276,23 +395,61 @@ function MapPageContent({ businesses, onBusinessSelect, selectedBusiness, onChec
             </motion.button>
           </div>
           <ExploreCarousel
-            businesses={businesses}
-            userLocation={{ lat: userPos[0], lng: userPos[1] }}
-            onSelect={handleBusinessSelect}
+            businesses={businesses as any}
+            userLocation={{ lat: livePosition[0], lng: livePosition[1] }}
+            onSelect={handleBusinessSelect as any}
           />
         </>
+      )}
+
+      {routeTarget && !selectedBusiness && (
+        <div className="absolute bottom-28 left-4 right-4 z-20">
+          <motion.button
+            whileTap={{ scale: 0.96 }}
+            onClick={() => onCheckIn(routeTarget)}
+            className="w-full py-4 rounded-2xl text-white font-bold flex items-center justify-center gap-2"
+            style={{ background: 'linear-gradient(135deg,#FF90B5,#B090FF,#7AC8FF)', boxShadow: '0 6px 24px rgba(176,144,255,0.4)' }}>
+            <Navigation size={20} /> {t.checkIn}
+          </motion.button>
+        </div>
       )}
     </div>
   );
 }
 
-// ── Page wrapper ─────────────────────────────────────────────────────────────
 export function MapPage() {
-  const [businesses, setBusinesses] = useState<PartnerBusiness[]>([]);
-  const [selectedBusiness, setSelectedBusiness] = useState<PartnerBusiness | null>(null);
-  const [navigationTarget, setNavigationTarget] = useState<PartnerBusiness | null>(null);
+  const navigate = useNavigate();
+  const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(null);
+  const [navigationTarget, setNavigationTarget] = useState<Business | null>(null);
+  const [routeTarget, setRouteTarget] = useState<Business | null>(null);
+  const [explorers, setExplorers] = useState<{ user_id: string; full_name: string; lat: number; lng: number }[]>([]);
+  const [questBusinessMap, setQuestBusinessMap] = useState<Record<string, { questId: string; questTitle: string }[]>>({});
   const mapRef = useRef<L.Map | null>(null);
   const { openModal, closeModal } = useUI();
+  const { position: livePosition } = useWatchPosition();
+  const handleStartChat = useCallback((_userId: string, _userName: string) => {
+    navigate('/profile');
+  }, [navigate]);
+
+  const { data: businesses = [] } = useQuery({
+    queryKey: ['businesses'],
+    queryFn: getBusinesses,
+    staleTime: 1000 * 60 * 2,
+    refetchInterval: 1000 * 60 * 2,
+  });
+
+  // Fetch quest stops to show quest indicators on business markers
+  useEffect(() => {
+    getQuestStopsByBusinessIds().then(setQuestBusinessMap).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    getOnlineUsers().then(data => setExplorers(data.map(u => ({ user_id: u.user_id, full_name: u.full_name, lat: u.lat, lng: u.lng }))));
+    const interval = setInterval(() => {
+      getOnlineUsers().then(data => setExplorers(data.map(u => ({ user_id: u.user_id, full_name: u.full_name, lat: u.lat, lng: u.lng }))));
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const [tiles] = useState<ExploredTile[]>([
     { id: '1', user_id: 'demo', center_lat: 42.1430, center_lng: 24.7490, radius_meters: 150, revealed_date: '2024-01-01' },
@@ -300,16 +457,16 @@ export function MapPage() {
     { id: '3', user_id: 'demo', center_lat: 42.1415, center_lng: 24.7480, radius_meters: 150, revealed_date: '2024-01-03' },
   ]);
 
-  useEffect(() => { fetchBusinesses().then(setBusinesses); }, []);
-
-  const handleCheckIn = useCallback((business: PartnerBusiness) => {
+  const handleCheckIn = useCallback((business: Business) => {
+    setRouteTarget(business);
     setNavigationTarget(business);
     setSelectedBusiness(null);
-    openModal(); // hide bottom nav while navigating
+    openModal();
   }, [openModal]);
 
   const handleNavClose = useCallback(() => {
     setNavigationTarget(null);
+    setRouteTarget(null);
     closeModal();
   }, [closeModal]);
 
@@ -323,7 +480,13 @@ export function MapPage() {
           onCheckIn={handleCheckIn}
           tiles={tiles}
           showExplorers={true}
+          explorers={explorers}
           onMapReady={(m) => { mapRef.current = m; }}
+          livePosition={livePosition}
+          routeTarget={routeTarget}
+          onClearRoute={() => { setRouteTarget(null); setNavigationTarget(null); }}
+          onStartChat={handleStartChat}
+          questBusinessMap={questBusinessMap}
         />
         <AnimatePresence>
           {navigationTarget && (

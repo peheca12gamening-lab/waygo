@@ -36,12 +36,12 @@ export function ExploreCarousel({ businesses, userLocation, onSelect }: ExploreC
   }).slice(0, 10);
 
   return (
-    <div className="absolute bottom-36 left-0 right-0 z-10">
+    <div className="absolute bottom-28 left-0 right-0 z-10">
       <div className="px-4 mb-2">
-        <h3 className="text-sm font-medium text-gray-300">Explore Nearby</h3>
+        <h3 className="text-xs font-medium text-gray-300">Explore Nearby</h3>
       </div>
       <div className="overflow-x-auto scrollbar-hide px-4 pb-2">
-        <div className="flex gap-3">
+        <div className="flex gap-2.5">
           {sortedBusinesses.map((business, index) => {
             const distance = haversineDistance(userLocation.lat, userLocation.lng, business.lat, business.lng);
 
@@ -52,14 +52,14 @@ export function ExploreCarousel({ businesses, userLocation, onSelect }: ExploreC
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: index * 0.05 }}
                 onClick={() => onSelect(business)}
-                className="flex-shrink-0 w-40 rounded-xl shadow-lg overflow-hidden text-left" style={{background:"var(--bg-card)"}}
+                className="flex-shrink-0 w-36 rounded-xl shadow-lg overflow-hidden text-left" style={{background:"var(--bg-card)"}}
               >
-                <div className="h-20 bg-gradient-to-br from-[#F0F0FF] to-[#E8E8FF] flex items-center justify-center text-3xl">
-                  {categoryEmoji[business.category] || '📍'}
+                <div className="h-16 bg-gradient-to-br from-[#F0F0FF] to-[#E8E8FF] flex items-center justify-center text-2xl">
+                  {categoryEmoji[business.category ?? ''] || '📍'}
                 </div>
-                <div className="p-3">
-                  <h4 className="font-semibold text-sm truncate" style={{color:"var(--text-primary)"}}>{business.name}</h4>
-                  <p className="text-xs text-gray-500 mt-1">
+                <div className="p-2.5">
+                  <h4 className="font-semibold text-xs truncate" style={{color:"var(--text-primary)"}}>{business.name}</h4>
+                  <p className="text-xs text-gray-500 mt-0.5">
                     {formatDistance(distance)}
                   </p>
                 </div>

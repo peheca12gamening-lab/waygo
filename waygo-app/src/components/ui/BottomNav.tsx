@@ -1,6 +1,6 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Map, ScrollText, Sparkles, User, Trophy } from 'lucide-react';
+import { Map, ScrollText, Sparkles, User, Trophy, Landmark } from 'lucide-react';
 import { useUI } from '../../context/UIContext';
 import { useApp } from '../../context/AppContext';
 
@@ -11,11 +11,12 @@ export function BottomNav() {
   const { t } = useApp();
 
   const navItems = [
-    { path: '/',            label: t.map,    icon: Map       },
-    { path: '/quests',      label: t.quests, icon: ScrollText },
-    { path: '/foryou',      label: t.forYou, icon: Sparkles  },
-    { path: '/profile',     label: t.profile,icon: User      },
-    { path: '/leaderboard', label: t.top,    icon: Trophy    },
+    { path: '/',            label: t.map,       icon: Map       },
+    { path: '/quests',      label: t.quests,    icon: ScrollText },
+    { path: '/landmarks',   label: t.landmarks, icon: Landmark  },
+    { path: '/foryou',      label: t.forYou,    icon: Sparkles  },
+    { path: '/profile',     label: t.profile,   icon: User      },
+    { path: '/leaderboard', label: t.top,       icon: Trophy    },
   ];
 
   return (
@@ -35,7 +36,7 @@ export function BottomNav() {
             const isActive = pathname === path;
             return (
               <button key={path} onClick={() => navigate(path)}
-                className="relative flex flex-col items-center py-1 px-3 min-w-[60px]">
+                className="relative flex flex-col items-center py-1 px-2 min-w-[52px]">
                 {isActive && (
                   <motion.div layoutId="navBg" className="absolute inset-0 rounded-xl"
                     style={{ background: 'linear-gradient(135deg,#FFD0E0,#E0D0FF,#C8E8FF)' }}
@@ -44,9 +45,9 @@ export function BottomNav() {
                 <motion.div initial={false} animate={{ scale: isActive ? 1.1 : 1 }}
                   className="relative z-10" style={{ color: isActive ? '#B090FF' : 'var(--text-soft)' }}
                   transition={{ type: 'spring', stiffness: 500, damping: 30 }}>
-                  <Icon size={22} strokeWidth={isActive ? 2.5 : 2} />
+                  <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
                 </motion.div>
-                <span className="relative z-10 text-xs mt-1 font-medium"
+                <span className="relative z-10 text-[10px] mt-1 font-medium leading-tight"
                   style={{ color: isActive ? '#B090FF' : 'var(--text-soft)' }}>
                   {label}
                 </span>

@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
-import type { ValidationResult, PartnerBusiness } from '../types';
+import type { ValidationResult } from '../types';
 import { validateCheckin, calculateXP } from '../utils/geo';
-import { DEMO_USER } from '../data/seed';
+import { createCheckin } from '../lib/db';
+import { useAuth } from '../context/AuthContext';
 
 interface CheckinState {
   isValidating: boolean;
@@ -11,6 +12,7 @@ interface CheckinState {
 }
 
 export function useCheckin() {
+  const { user } = useAuth();
   const [state, setState] = useState<CheckinState>({
     isValidating: false,
     result: null,
@@ -18,20 +20,31 @@ export function useCheckin() {
     streakUpdated: 0,
   });
 
-  const performCheckin = useCallback((
+  const performCheckin = useCallback(async (
     userLat: number,
     userLng: number,
-    business: PartnerBusiness,
+    business: any,
     enteredCode: string,
-    currentStreak: number = DEMO_USER.streak_current
-  ): ValidationResult => {
+    currentStreak: number = 0
+  ): Promise<ValidationResult> => {
     setState(prev => ({ ...prev, isValidating: true }));
 
     const result = validateCheckin(userLat, userLng, business, enteredCode);
 
-    if (result.valid) {
+    if (result.valid && user) {
       const { total } = calculateXP(50, currentStreak, false);
       const newStreak = currentStreak + 1;
+
+      try {
+        await createCheckin(user.id, business.id, {
+          validationMethod: 'qr',
+          gpsLat: userLat,
+          gpsLng: userLng,
+          distanceMeters: Math.round(50),
+        });
+      } catch (e) {
+        console.error('Checkin DB error:', e);
+      }
 
       setState({
         isValidating: false,
@@ -49,7 +62,7 @@ export function useCheckin() {
     }
 
     return result;
-  }, []);
+  }, [user]);
 
   const resetCheckin = useCallback(() => {
     setState({

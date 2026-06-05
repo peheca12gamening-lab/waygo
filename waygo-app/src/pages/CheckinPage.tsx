@@ -2,13 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QrCode, Keyboard, MapPin, AlertTriangle, ArrowLeft } from 'lucide-react';
-import type { PartnerBusiness } from '../types';
-import { DEMO_USER } from '../data/seed';
+import { useAuth } from '../context/AuthContext';
+import { useApp } from '../context/AppContext';
 import { QRScanner, CodeInput, Celebration } from '../components/checkin';
-import { useCheckin } from '../hooks/useCheckin';
-import { fetchBusinessById } from '../data/mockApi';
-import { formatDistance } from '../utils/geo';
-import { haversine } from '../utils/geo';
+import { getBusinessById } from '../lib/db';
+import { formatDistance, haversine } from '../utils/geo';
 
 type CheckinMode = 'qr' | 'code';
 
@@ -16,134 +14,100 @@ export function CheckinPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { businessId } = useParams<{ businessId?: string }>();
+  const { user } = useAuth();
+  const { t } = useApp();
 
   const [mode, setMode] = useState<CheckinMode>('qr');
-  const [selectedBusiness, setSelectedBusiness] = useState<PartnerBusiness | null>(null);
+  const [selectedBusiness, setSelectedBusiness] = useState<any>(null);
   const [_code, setCode] = useState('');
   const [distance, setDistance] = useState<number | null>(null);
   const [showCelebration, setShowCelebration] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-
-  const { result, performCheckin, resetCheckin } = useCheckin();
+  const [result, setResult] = useState<{ valid: boolean; reason?: string; xp?: number } | null>(null);
 
   useEffect(() => {
     if (location.state?.business) {
-      setSelectedBusiness(location.state.business as PartnerBusiness);
+      setSelectedBusiness(location.state.business);
     } else if (businessId) {
-      fetchBusinessById(businessId).then(b => {
+      getBusinessById(businessId).then(b => {
         if (b) setSelectedBusiness(b);
       });
     }
   }, [location.state, businessId]);
 
   useEffect(() => {
-    if (selectedBusiness) {
+    if (selectedBusiness && user) {
       const dist = haversine(
-        DEMO_USER.last_location_lat || 42.1420,
-        DEMO_USER.last_location_lng || 24.7490,
-        selectedBusiness.lat,
-        selectedBusiness.lng
+        42.1420, 24.7490,
+        selectedBusiness.lat ?? selectedBusiness.categories?.slug === 'museum' ? 42.1441 : 42.1428,
+        selectedBusiness.lng ?? 24.7501
       );
       setDistance(dist);
     }
-  }, [selectedBusiness]);
+  }, [selectedBusiness, user]);
 
   const handleCodeComplete = useCallback((enteredCode: string) => {
     if (!selectedBusiness || isProcessing) return;
-
     setIsProcessing(true);
-    const validationResult = performCheckin(
-      DEMO_USER.last_location_lat || 42.1420,
-      DEMO_USER.last_location_lng || 24.7490,
-      selectedBusiness,
-      enteredCode,
-      DEMO_USER.streak_current
-    );
-
-    if (validationResult.valid) {
+    const valid = enteredCode.toUpperCase() === (selectedBusiness.checkin_code ?? '').toUpperCase();
+    if (valid) {
       setCode(enteredCode);
+      setResult({ valid: true, xp: 50 });
       setTimeout(() => {
         setShowCelebration(true);
         setIsProcessing(false);
       }, 500);
     } else {
+      setResult({ valid: false, reason: t.incorrectCode });
       setIsProcessing(false);
     }
-  }, [selectedBusiness, isProcessing, performCheckin]);
+  }, [selectedBusiness, isProcessing, t]);
 
   const handleQRDetected = useCallback((qrCode: string) => {
-    if (!selectedBusiness || isProcessing) return;
-
-    setIsProcessing(true);
-    const validationResult = performCheckin(
-      DEMO_USER.last_location_lat || 42.1420,
-      DEMO_USER.last_location_lng || 24.7490,
-      selectedBusiness,
-      qrCode,
-      DEMO_USER.streak_current
-    );
-
-    if (validationResult.valid) {
-      setCode(qrCode);
-      setTimeout(() => {
-        setShowCelebration(true);
-        setIsProcessing(false);
-      }, 500);
-    } else {
-      setIsProcessing(false);
-    }
-  }, [selectedBusiness, isProcessing, performCheckin]);
+    handleCodeComplete(qrCode);
+  }, [handleCodeComplete]);
 
   const handleDismissCelebration = () => {
     setShowCelebration(false);
-    resetCheckin();
     setCode('');
     navigate('/');
   };
 
   return (
-    <div className="min-h-screen bg-waygo-dark pb-24 pt-safe">
+    <div className="min-h-screen pb-24 pt-safe" style={{ background: 'var(--rainbow-bg)' }}>
       <div className="p-4">
         <div className="flex items-center gap-4 mb-6">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 bg-waygo-darkLight rounded-full text-gray-400"
-          >
-            <ArrowLeft size={24} />
+          <button onClick={() => navigate(-1)} className="p-2 rounded-full" style={{ background: 'var(--bg-chip)' }}>
+            <ArrowLeft size={24} style={{ color: 'var(--text-primary)' }} />
           </button>
-          <h1 className="text-2xl font-bold text-white">Check In</h1>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{t.checkInPage}</h1>
         </div>
 
         {selectedBusiness ? (
           <div className="space-y-6">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-waygo-darkMid rounded-2xl p-4 border border-white/10"
-            >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+              className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)' }}>
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-waygo-teal/20 flex items-center justify-center text-2xl">
-                  {selectedBusiness.category === 'cafe' ? '☕' :
-                   selectedBusiness.category === 'museum' ? '🏛️' :
-                   selectedBusiness.category === 'cultural' ? '🕌' : '📍'}
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{ background: 'linear-gradient(135deg,#F0E8FF,#E8F0FF)' }}>
+                  {selectedBusiness.categories?.emoji ?? '📍'}
                 </div>
                 <div>
-                  <h2 className="font-semibold text-white">{selectedBusiness.name}</h2>
-                  <p className="text-sm text-gray-400">{selectedBusiness.address}</p>
+                  <h2 className="font-semibold" style={{ color: 'var(--text-primary)' }}>{selectedBusiness.name}</h2>
+                  <p className="text-sm" style={{ color: 'var(--text-soft)' }}>{selectedBusiness.address}</p>
                 </div>
               </div>
 
               {distance !== null && (
                 <div className={`mt-4 flex items-center gap-2 p-3 rounded-xl ${
-                  distance <= selectedBusiness.geofence_radius_meters
-                    ? 'bg-green-500/20 text-green-400'
-                    : 'bg-amber-500/20 text-amber-400'
-                }`}>
+                  distance <= (selectedBusiness.geofence_radius ?? 150)
+                    ? 'text-green-600' : 'text-amber-600'
+                }`}
+                  style={{ background: distance <= (selectedBusiness.geofence_radius ?? 150) ? '#E8FFF5' : '#FFF3E0' }}>
                   <MapPin size={18} />
                   <span className="text-sm font-medium">
-                    {formatDistance(distance)} away
-                    {distance > selectedBusiness.geofence_radius_meters && (
-                      <span className="ml-2">({selectedBusiness.geofence_radius_meters}m required)</span>
+                    {formatDistance(distance)} {t.away}
+                    {distance > (selectedBusiness.geofence_radius ?? 150) && (
+                      <span className="ml-2">({selectedBusiness.geofence_radius ?? 150}m {t.required})</span>
                     )}
                   </span>
                 </div>
@@ -151,58 +115,35 @@ export function CheckinPage() {
             </motion.div>
 
             {result && !result.valid && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-red-500/20 border border-red-500/30 rounded-xl p-4 flex items-center gap-3"
-              >
+              <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+                className="rounded-xl p-4 flex items-center gap-3"
+                style={{ background: '#FFF0F3', border: '1.5px solid #FFD0DC' }}>
                 <AlertTriangle className="text-red-400 flex-shrink-0" />
                 <p className="text-red-400 text-sm">{result.reason}</p>
               </motion.div>
             )}
 
-            <div className="flex gap-2 p-1 bg-waygo-darkLight rounded-xl">
-              <button
-                onClick={() => setMode('qr')}
-                className={`flex-1 py-3 rounded-lg text-sm font-medium transition-colors ${
-                  mode === 'qr' ? 'bg-waygo-teal text-white' : 'text-gray-400'
-                }`}
-              >
-                <QrCode size={18} className="inline mr-2" />
-                QR Scanner
+            <div className="flex gap-2 p-1 rounded-xl" style={{ background: 'var(--bg-chip)' }}>
+              <button onClick={() => setMode('qr')}
+                className="flex-1 py-3 rounded-lg text-sm font-medium transition-colors"
+                style={{ background: mode === 'qr' ? 'var(--bg-card)' : 'transparent', color: mode === 'qr' ? 'var(--text-primary)' : 'var(--text-soft)' }}>
+                <QrCode size={18} className="inline mr-2" />{t.qrScanner}
               </button>
-              <button
-                onClick={() => setMode('code')}
-                className={`flex-1 py-3 rounded-lg text-sm font-medium transition-colors ${
-                  mode === 'code' ? 'bg-waygo-teal text-white' : 'text-gray-400'
-                }`}
-              >
-                <Keyboard size={18} className="inline mr-2" />
-                Manual Code
+              <button onClick={() => setMode('code')}
+                className="flex-1 py-3 rounded-lg text-sm font-medium transition-colors"
+                style={{ background: mode === 'code' ? 'var(--bg-card)' : 'transparent', color: mode === 'code' ? 'var(--text-primary)' : 'var(--text-soft)' }}>
+                <Keyboard size={18} className="inline mr-2" />{t.manualCode}
               </button>
             </div>
 
             <AnimatePresence mode="wait">
               {mode === 'qr' ? (
-                <motion.div
-                  key="qr"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                >
-                  <QRScanner
-                    onCodeDetected={handleQRDetected}
-                    isActive={!isProcessing}
-                  />
+                <motion.div key="qr" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
+                  <QRScanner onCodeDetected={handleQRDetected} isActive={!isProcessing} />
                 </motion.div>
               ) : (
-                <motion.div
-                  key="code"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  className="bg-waygo-darkMid rounded-2xl p-6 border border-white/10"
-                >
+                <motion.div key="code" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
+                  className="rounded-2xl p-6" style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)' }}>
                   <CodeInput onComplete={handleCodeComplete} />
                 </motion.div>
               )}
@@ -210,26 +151,20 @@ export function CheckinPage() {
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-16">
-            <div className="w-20 h-20 rounded-full bg-waygo-darkLight flex items-center justify-center text-4xl mb-4">
+            <div className="w-20 h-20 rounded-full flex items-center justify-center text-4xl mb-4" style={{ background: 'var(--bg-chip)' }}>
               📍
             </div>
-            <h2 className="text-lg font-semibold text-white mb-2">No Location Selected</h2>
-            <p className="text-gray-400 text-center mb-6">
-              Select a place from the map to check in
-            </p>
-            <button
-              onClick={() => navigate('/')}
-              className="px-6 py-3 bg-waygo-teal text-white font-semibold rounded-xl"
-            >
-              Go to Map
-            </button>
+            <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{t.noLocationSelected}</h2>
+            <p className="text-sm mb-6" style={{ color: 'var(--text-soft)' }}>{t.selectPlace}</p>
+            <button onClick={() => navigate('/')} className="px-6 py-3 rounded-xl text-white font-semibold"
+              style={{ background: 'linear-gradient(135deg,#B090FF,#7AC8FF)' }}>{t.goToMap}</button>
           </div>
         )}
       </div>
 
       <Celebration
         xpEarned={result?.xp || 75}
-        streak={DEMO_USER.streak_current + 1}
+        streak={(user?.streak_current ?? 0) + 1}
         questProgress={{ current: 2, total: 5 }}
         isVisible={showCelebration}
         onDismiss={handleDismissCelebration}

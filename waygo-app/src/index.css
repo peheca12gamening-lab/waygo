@@ -235,3 +235,31 @@ html.dark .min-h-screen.bg-waygo-dark {
 }
 
 html.dark .leaflet-container { background: #0F0F1A !important; }
+
+/* ── Leaflet Routing Machine ────────────────────────────────────────────────── */
+.leaflet-routing-container {
+  background: var(--bg-card) !important;
+  border: 1.5px solid var(--border) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 16px var(--shadow) !important;
+  font-family: inherit !important;
+  max-height: 40vh !important;
+  overflow-y: auto !important;
+  z-index: 1000 !important;
+}
+.leaflet-routing-container .leaflet-routing-alt {
+  border-bottom: 1px solid var(--border) !important;
+}
+.leaflet-routing-container .leaflet-routing-alt h2 {
+  font-size: 13px !important;
+  color: var(--text-primary) !important;
+}
+.leaflet-routing-container .leaflet-routing-alt tr:hover {
+  background: var(--bg-secondary) !important;
+}
+.leaflet-routing-container .leaflet-routing-collapse-btn {
+  color: var(--text-soft) !important;
+}
+.leaflet-routing-container .leaflet-routing-geocoders {
+  border-top: 1px solid var(--border) !important;
+}

@@ -56,14 +56,16 @@ export function validateCheckin(
 ): ValidationResult {
   const distance = haversine(userLat, userLng, business.lat, business.lng);
 
-  if (distance > business.geofence_radius_meters) {
+  const radius = business.geofence_radius ?? 150;
+  if (distance > radius) {
     return {
       valid: false,
-      reason: `You are ${Math.round(distance)}m away. Must be within ${business.geofence_radius_meters}m`,
+      reason: `You are ${Math.round(distance)}m away. Must be within ${radius}m`,
     };
   }
 
-  if (enteredCode.toUpperCase() !== business.checkin_code.toUpperCase()) {
+  const code = business.checkin_code ?? '';
+  if (enteredCode.toUpperCase() !== code.toUpperCase()) {
     return {
       valid: false,
       reason: 'Incorrect check-in code',
